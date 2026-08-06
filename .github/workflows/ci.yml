@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Every job reads its Node version from `.nvmrc` rather than a version pinned
+# here, so CI and a developer's shell cannot disagree about the runtime. They
+# did: this workflow held '22' while a local default of 20 — end-of-life since
+# April 2026 — failed the e2e suite on an undici symbol testcontainers needs.
+jobs:
+  static:
+    name: Lint, typecheck and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint:check
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # Catches the package that outlives the code that needed it. Six were
+      # already here when this was added — including a scheduler this app
+      # deliberately does not use, because BullMQ owns the recurring work.
+      - name: Dead code and unused dependencies
+        run: npm run check:knip
+
+      - name: Build
+        run: npm run build
+
+      # The committed contract is what the mobile client generates its wire
+      # types from. Emitting it here and diffing means a renamed DTO field
+      # fails on the pull request that renamed it, rather than in the app three
+      # weeks later against a decoder still reading the old name.
+      - name: OpenAPI contract is up to date
+        run: |
+          npm run openapi:emit
+          git diff --exit-code -- openapi.json \
+            || (echo "::error::openapi.json is stale — run 'npm run openapi:emit' and commit the result" && exit 1)
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # The scoring engine is the one piece with a coverage floor: it decides
+      # every score in the game and has no I/O to hide behind.
+      - name: Test with coverage
+        run: npm run test:cov
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  e2e:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # No service containers: the suite starts its own Postgres and Redis via
+      # testcontainers, so it runs identically here and on a laptop. Docker is
+      # already available on ubuntu-latest.
+      - name: End-to-end tests
+        run: npm run test:e2e
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: cashortrash-backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

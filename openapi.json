@@ -1,0 +1,2039 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/v1/auth/anonymous": {
+      "post": {
+        "operationId": "AuthController_anonymous",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnonymousAuthDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPairDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Exchange a device id for a token pair, registering on first sight.",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/refresh": {
+      "post": {
+        "operationId": "AuthController_refresh",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshTokenDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPairDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Trade a refresh token for a fresh pair.",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "operationId": "MeController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Profile and the stats card on Home.",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/v1/me/username": {
+      "post": {
+        "operationId": "MeController_claimUsername",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimUsernameDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Claim or change the player handle.",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/v1/usernames/availability": {
+      "get": {
+        "operationId": "UsernamesController_availability",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsernameAvailabilityDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Live availability check for the onboarding field.",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/v1/leaderboard": {
+      "get": {
+        "operationId": "LeaderboardController_board",
+        "parameters": [
+          {
+            "name": "scope",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": "today",
+              "type": "string",
+              "enum": [
+                "today",
+                "week",
+                "friends"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeaderboardResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Podium, ranked rows, the player’s row and their neighbours.",
+        "tags": [
+          "leaderboard"
+        ]
+      }
+    },
+    "/v1/themes": {
+      "get": {
+        "operationId": "CatalogController_themes",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ThemeDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Theme picker grid, with difficulty labels.",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/v1/currencies": {
+      "get": {
+        "operationId": "CurrencyController_currencies",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CurrencyDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "The currencies a round may be played in, and what a dollar buys of each.",
+        "tags": [
+          "currency"
+        ]
+      }
+    },
+    "/v1/sessions": {
+      "post": {
+        "operationId": "SessionsController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Create a session, or resume the in-progress one. Daily is idempotent.",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{id}/current": {
+      "get": {
+        "description": "Amounts come back in `?currency`, dollars by default. Bet in the same one: the slider grid differs per currency, and a bet snapped to the euro grid is not on the dollar one.",
+        "operationId": "SessionsController_current",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "currency",
+            "required": false,
+            "in": "query",
+            "description": "Omitted means US dollars — the unit prices are stored in.",
+            "schema": {
+              "default": "USD",
+              "type": "string",
+              "enum": [
+                "USD",
+                "EUR",
+                "GBP"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentRoundDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "The item to price, with slider bounds — never the true price.",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{id}/rounds/{index}/bet": {
+      "post": {
+        "operationId": "SessionsController_bet",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "index",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceBetDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevealResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Place the range bet and reveal the price.",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{id}/summary": {
+      "get": {
+        "operationId": "SessionsController_summary",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "currency",
+            "required": false,
+            "in": "query",
+            "description": "Omitted means US dollars — the unit prices are stored in.",
+            "schema": {
+              "default": "USD",
+              "type": "string",
+              "enum": [
+                "USD",
+                "EUR",
+                "GBP"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSummaryDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "End-of-game summary, percentile and share text.",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/matches": {
+      "post": {
+        "operationId": "MatchesController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Open a match and get the invite code and deep link.",
+        "tags": [
+          "matches"
+        ]
+      }
+    },
+    "/v1/matches/join": {
+      "post": {
+        "operationId": "MatchesController_join",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinMatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Join a match from an invite code.",
+        "tags": [
+          "matches"
+        ]
+      }
+    },
+    "/v1/matches/{id}": {
+      "get": {
+        "operationId": "MatchesController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Match state, including live presence per player.",
+        "tags": [
+          "matches"
+        ]
+      }
+    },
+    "/v1/friends": {
+      "get": {
+        "operationId": "FriendsController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FriendListDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "The player’s friends, most recently added first.",
+        "tags": [
+          "friends"
+        ]
+      },
+      "post": {
+        "operationId": "FriendsController_add",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddFriendDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FriendDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Add a friend by handle. Idempotent.",
+        "tags": [
+          "friends"
+        ]
+      }
+    },
+    "/v1/friends/{userId}": {
+      "delete": {
+        "operationId": "FriendsController_remove",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Remove a friend. Succeeds whether or not they were one.",
+        "tags": [
+          "friends"
+        ]
+      }
+    },
+    "/v1/me/push": {
+      "post": {
+        "operationId": "NotificationsController_register",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterPushTokenDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushRegistrationDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Register a push token. Called only after the player taps \"Notify me\".",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/v1/home": {
+      "get": {
+        "operationId": "HomeController_home",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Everything the Home screen needs, in one call.",
+        "tags": [
+          "home"
+        ]
+      }
+    },
+    "/v1/manifest": {
+      "get": {
+        "operationId": "ManifestController_manifest",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheManifestDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Cache versions, for a client deciding what to refetch.",
+        "tags": [
+          "manifest"
+        ]
+      }
+    },
+    "/health/live": {
+      "get": {
+        "operationId": "HealthController_live",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Liveness probe — process only, no dependencies.",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "HealthController_ready",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The Health Check is successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    },
+                    "info": {
+                      "type": "object",
+                      "example": {
+                        "database": {
+                          "status": "up"
+                        }
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": [
+                          "status"
+                        ],
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "error": {
+                      "type": "object",
+                      "example": {},
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": [
+                          "status"
+                        ],
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "details": {
+                      "type": "object",
+                      "example": {
+                        "database": {
+                          "status": "up"
+                        }
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": [
+                          "status"
+                        ],
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Health Check is not successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "info": {
+                      "type": "object",
+                      "example": {
+                        "database": {
+                          "status": "up"
+                        }
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": [
+                          "status"
+                        ],
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "error": {
+                      "type": "object",
+                      "example": {
+                        "redis": {
+                          "status": "down",
+                          "message": "Could not connect"
+                        }
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": [
+                          "status"
+                        ],
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": true
+                      },
+                      "nullable": true
+                    },
+                    "details": {
+                      "type": "object",
+                      "example": {
+                        "database": {
+                          "status": "up"
+                        },
+                        "redis": {
+                          "status": "down",
+                          "message": "Could not connect"
+                        }
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": [
+                          "status"
+                        ],
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Readiness probe — database, Redis and queue.",
+        "tags": [
+          "health"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "CashOrTrash API",
+    "description": "Price-guessing game API. `truePriceCents` is returned by exactly one endpoint: POST /sessions/:id/rounds/:index/bet.",
+    "version": "1.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http"
+      }
+    },
+    "schemas": {
+      "AnonymousAuthDto": {
+        "type": "object",
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "description": "Client-generated, stable per install. Re-posting the same id returns the\nsame player, which is what makes a reinstall-free app relaunch seamless.",
+            "minLength": 8,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "example": "6f1c0a3e-8b6e-4a2f-9a9a-1c2d3e4f5a6b"
+          }
+        },
+        "required": [
+          "deviceId"
+        ]
+      },
+      "TokenPairDto": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          },
+          "refreshToken": {
+            "type": "string"
+          },
+          "expiresIn": {
+            "type": "number",
+            "description": "Access token lifetime in seconds."
+          },
+          "isNewPlayer": {
+            "type": "boolean",
+            "description": "Set on first sight of a device."
+          },
+          "username": {
+            "type": "string",
+            "nullable": true,
+            "description": "Null until the name is claimed."
+          }
+        },
+        "required": [
+          "accessToken",
+          "refreshToken",
+          "expiresIn",
+          "isNewPlayer",
+          "username"
+        ]
+      },
+      "RefreshTokenDto": {
+        "type": "object",
+        "properties": {
+          "refreshToken": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "refreshToken"
+        ]
+      },
+      "MeDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "username": {
+            "type": "string",
+            "nullable": true
+          },
+          "avatarSeed": {
+            "type": "string"
+          },
+          "totalPoints": {
+            "type": "number"
+          },
+          "streakDays": {
+            "type": "number",
+            "description": "Zero once the streak lapses, whatever is stored."
+          },
+          "bestRoundScore": {
+            "type": "number"
+          },
+          "globalRank": {
+            "type": "number",
+            "nullable": true,
+            "description": "Today’s global rank, if ranked."
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "avatarSeed",
+          "totalPoints",
+          "streakDays",
+          "bestRoundScore",
+          "globalRank",
+          "createdAt"
+        ]
+      },
+      "ClaimUsernameDto": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "example": "sam"
+          }
+        },
+        "required": [
+          "username"
+        ]
+      },
+      "UsernameAvailabilityDto": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "normalised": {
+            "type": "string",
+            "description": "The handle as it would be stored."
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Player-facing copy for the inline hint; null when available."
+          },
+          "code": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "username-invalid",
+              "username-not-allowed",
+              "username-taken"
+            ],
+            "description": "Stable slug for the client to pick its own copy from; null when available."
+          }
+        },
+        "required": [
+          "available",
+          "normalised",
+          "reason",
+          "code"
+        ]
+      },
+      "LeaderboardRowDto": {
+        "type": "object",
+        "properties": {
+          "rank": {
+            "type": "number"
+          },
+          "userId": {
+            "type": "number"
+          },
+          "username": {
+            "type": "string",
+            "nullable": true
+          },
+          "avatarSeed": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "isMe": {
+            "type": "boolean",
+            "description": "True for the requesting player’s own row."
+          }
+        },
+        "required": [
+          "rank",
+          "userId",
+          "username",
+          "avatarSeed",
+          "score",
+          "isMe"
+        ]
+      },
+      "LeaderboardMeDto": {
+        "type": "object",
+        "properties": {
+          "rank": {
+            "type": "number",
+            "nullable": true,
+            "description": "Null when the player has no score yet."
+          },
+          "score": {
+            "type": "number"
+          },
+          "delta": {
+            "type": "number",
+            "nullable": true,
+            "description": "Yesterday’s final rank minus today’s live rank; the \"▲ 41\" tag."
+          },
+          "percentile": {
+            "type": "number",
+            "nullable": true,
+            "description": "Percent of players beaten, 0–100. Null when unranked."
+          }
+        },
+        "required": [
+          "rank",
+          "score",
+          "delta",
+          "percentile"
+        ]
+      },
+      "LeaderboardResponseDto": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "enum": [
+              "today",
+              "week",
+              "friends"
+            ],
+            "type": "string"
+          },
+          "podium": {
+            "description": "Top three, for the podium.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LeaderboardRowDto"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LeaderboardRowDto"
+            }
+          },
+          "me": {
+            "$ref": "#/components/schemas/LeaderboardMeDto"
+          },
+          "neighbours": {
+            "description": "The rows either side of the player, for the neighbour strip.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LeaderboardRowDto"
+            }
+          },
+          "totalPlayers": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "scope",
+          "podium",
+          "rows",
+          "me",
+          "neighbours",
+          "totalPlayers"
+        ]
+      },
+      "ThemeDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "slug": {
+            "type": "string",
+            "example": "everyday-stuff"
+          },
+          "name": {
+            "type": "string",
+            "example": "Everyday stuff"
+          },
+          "iconName": {
+            "type": "string",
+            "enum": [
+              "basket",
+              "camera",
+              "gem",
+              "house",
+              "shuffle",
+              "calendar",
+              "pencil"
+            ],
+            "description": "Glyph for the card. A name from a fixed set the client ships; anything else it does not recognise falls back to its default."
+          },
+          "isMystery": {
+            "type": "boolean",
+            "description": "Mystery mix draws from every theme."
+          },
+          "bonusPct": {
+            "type": "number",
+            "example": 0.1,
+            "description": "0.1 == \"+10% point bonus\"."
+          },
+          "difficultyLabel": {
+            "type": "string",
+            "nullable": true,
+            "example": "Avg ±22%",
+            "description": "Null until the theme has enough rounds to be honest about."
+          },
+          "itemCount": {
+            "type": "number",
+            "description": "Playable item count; a theme needs at least 5."
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "iconName",
+          "isMystery",
+          "bonusPct",
+          "difficultyLabel",
+          "itemCount"
+        ]
+      },
+      "CurrencyDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "enum": [
+              "USD",
+              "EUR",
+              "GBP"
+            ],
+            "type": "string",
+            "example": "EUR"
+          },
+          "symbol": {
+            "type": "string",
+            "example": "€"
+          },
+          "rate": {
+            "type": "number",
+            "example": 0.92,
+            "description": "Units of this currency to one US dollar. Always 1 for USD."
+          },
+          "asOf": {
+            "type": "string",
+            "example": "2026-08-03T00:00:00.000Z",
+            "description": "When the provider published this rate. The epoch means no live fetch has landed yet and the configured fallback is standing in."
+          }
+        },
+        "required": [
+          "code",
+          "symbol",
+          "rate",
+          "asOf"
+        ]
+      },
+      "CreateSessionDto": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "enum": [
+              "daily",
+              "quick",
+              "h2h"
+            ],
+            "type": "string"
+          },
+          "themeSlug": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Required for quick and h2h rounds; ignored for daily, which has no theme picker."
+          },
+          "inviteCode": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 12,
+            "description": "Joins an existing head-to-head match."
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "SessionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "daily",
+              "quick",
+              "h2h"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "complete",
+              "abandoned"
+            ],
+            "type": "string"
+          },
+          "currentIndex": {
+            "type": "number",
+            "description": "Index of the next unplayed round."
+          },
+          "roundCount": {
+            "type": "number"
+          },
+          "totalScore": {
+            "type": "number"
+          },
+          "themeSlug": {
+            "type": "string",
+            "nullable": true
+          },
+          "themeName": {
+            "type": "string",
+            "nullable": true
+          },
+          "matchId": {
+            "type": "string",
+            "nullable": true
+          },
+          "resumed": {
+            "type": "boolean",
+            "description": "True when an in-progress session was returned."
+          }
+        },
+        "required": [
+          "id",
+          "mode",
+          "status",
+          "currentIndex",
+          "roundCount",
+          "totalScore",
+          "themeSlug",
+          "themeName",
+          "matchId",
+          "resumed"
+        ]
+      },
+      "CurrentRoundDto": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "roundIndex": {
+            "type": "number",
+            "description": "Zero-based; \"Round 3 of 5\" is index 2."
+          },
+          "roundCount": {
+            "type": "number"
+          },
+          "itemId": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string",
+            "example": "Designer office chair"
+          },
+          "conditionLine": {
+            "type": "string",
+            "example": "Lightly used · aluminium base · 2019"
+          },
+          "photoUrl": {
+            "type": "string"
+          },
+          "currency": {
+            "enum": [
+              "USD",
+              "EUR",
+              "GBP"
+            ],
+            "type": "string",
+            "description": "The currency every amount below is in."
+          },
+          "sliderMinCents": {
+            "type": "number"
+          },
+          "sliderMaxCents": {
+            "type": "number"
+          },
+          "incrementCents": {
+            "type": "number",
+            "description": "Slider step, in cents. Bets must land on it."
+          },
+          "suggestedLoCents": {
+            "type": "number",
+            "description": "Suggested opening range, already snapped."
+          },
+          "suggestedHiCents": {
+            "type": "number"
+          },
+          "totalScore": {
+            "type": "number",
+            "description": "Running total going into this round."
+          },
+          "roundSeconds": {
+            "type": "number",
+            "description": "Seconds allowed on this round, from when the server dealt it. 0 means the shot clock is off."
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": "string",
+            "nullable": true,
+            "description": "Server-side deadline. Null when the clock is off. Informational — a client should count `remainingMs` down rather than compare this against its own clock."
+          },
+          "remainingMs": {
+            "type": "number",
+            "nullable": true,
+            "description": "Milliseconds left when this response was built; count down from here. 0 means the round is already lost — re-fetching does not reset it, because the deadline is stamped once, when the round is first dealt. Null when the clock is off."
+          },
+          "opponentUsername": {
+            "type": "string",
+            "nullable": true,
+            "description": "Set for head-to-head rounds."
+          }
+        },
+        "required": [
+          "sessionId",
+          "roundIndex",
+          "roundCount",
+          "itemId",
+          "title",
+          "conditionLine",
+          "photoUrl",
+          "currency",
+          "sliderMinCents",
+          "sliderMaxCents",
+          "incrementCents",
+          "suggestedLoCents",
+          "suggestedHiCents",
+          "totalScore",
+          "roundSeconds",
+          "expiresAt",
+          "remainingMs",
+          "opponentUsername"
+        ]
+      },
+      "PlaceBetDto": {
+        "type": "object",
+        "properties": {
+          "loCents": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Lower bound, in cents, snapped to the increment."
+          },
+          "hiCents": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Upper bound, in cents, snapped to the increment."
+          },
+          "currency": {
+            "enum": [
+              "USD",
+              "EUR",
+              "GBP"
+            ],
+            "type": "string",
+            "default": "USD",
+            "description": "The currency the two bounds are expressed in. Must be the same one the round was dealt in — the bet is validated against that currency’s slider grid, then converted back to dollars to be scored."
+          }
+        },
+        "required": [
+          "loCents",
+          "hiCents"
+        ]
+      },
+      "RoundResultDto": {
+        "type": "object",
+        "properties": {
+          "roundIndex": {
+            "type": "number"
+          },
+          "itemId": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "loCents": {
+            "type": "number"
+          },
+          "hiCents": {
+            "type": "number"
+          },
+          "truePriceCents": {
+            "type": "number"
+          },
+          "hit": {
+            "type": "boolean"
+          },
+          "timedOut": {
+            "type": "boolean",
+            "description": "The bet reached the server after the round’s deadline and scored nothing. `hit` is false on such a round even when the range did contain the price — compare `truePriceCents` against the bounds to say so."
+          },
+          "elapsedMs": {
+            "type": "number",
+            "nullable": true,
+            "description": "Server-measured milliseconds spent on the round."
+          },
+          "missedByCents": {
+            "type": "number",
+            "description": "Cents between the guess and the price; 0 on a hit."
+          },
+          "basePoints": {
+            "type": "number"
+          },
+          "multiplier": {
+            "type": "number"
+          },
+          "points": {
+            "type": "number"
+          },
+          "errorPct": {
+            "type": "number",
+            "description": "Signed relative error of the range centre."
+          }
+        },
+        "required": [
+          "roundIndex",
+          "itemId",
+          "title",
+          "loCents",
+          "hiCents",
+          "truePriceCents",
+          "hit",
+          "timedOut",
+          "elapsedMs",
+          "missedByCents",
+          "basePoints",
+          "multiplier",
+          "points",
+          "errorPct"
+        ]
+      },
+      "OpponentStateDto": {
+        "type": "object",
+        "properties": {
+          "matchId": {
+            "type": "string"
+          },
+          "opponentUsername": {
+            "type": "string",
+            "nullable": true
+          },
+          "yourScore": {
+            "type": "number"
+          },
+          "opponentScore": {
+            "type": "number"
+          },
+          "opponentRoundPoints": {
+            "type": "number",
+            "nullable": true,
+            "description": "Points the opponent scored on this round, once they have played."
+          },
+          "leadLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "\"You lead 3–1\", or null while level."
+          }
+        },
+        "required": [
+          "matchId",
+          "opponentUsername",
+          "yourScore",
+          "opponentScore",
+          "opponentRoundPoints",
+          "leadLabel"
+        ]
+      },
+      "RevealResponseDto": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "round": {
+            "$ref": "#/components/schemas/RoundResultDto"
+          },
+          "currency": {
+            "enum": [
+              "USD",
+              "EUR",
+              "GBP"
+            ],
+            "type": "string",
+            "description": "The currency every amount below, and inside `round`, is in."
+          },
+          "sliderMinCents": {
+            "type": "number"
+          },
+          "sliderMaxCents": {
+            "type": "number"
+          },
+          "totalScore": {
+            "type": "number"
+          },
+          "nextRoundIndex": {
+            "type": "number",
+            "nullable": true,
+            "description": "Null when the session is over."
+          },
+          "isSessionComplete": {
+            "type": "boolean"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "True when this response replayed an already-recorded bet."
+          },
+          "match": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OpponentStateDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sessionId",
+          "round",
+          "currency",
+          "sliderMinCents",
+          "sliderMaxCents",
+          "totalScore",
+          "nextRoundIndex",
+          "isSessionComplete",
+          "replayed"
+        ]
+      },
+      "SessionSummaryDto": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "daily",
+              "quick",
+              "h2h"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "complete",
+              "abandoned"
+            ],
+            "type": "string"
+          },
+          "hits": {
+            "type": "number",
+            "description": "Ranges hit, out of roundCount. The \"2/5\" circle."
+          },
+          "roundCount": {
+            "type": "number"
+          },
+          "avgErrorPct": {
+            "type": "number",
+            "description": "Mean absolute centre error, 0–1. \"avg 18% off\"."
+          },
+          "totalScore": {
+            "type": "number"
+          },
+          "currency": {
+            "enum": [
+              "USD",
+              "EUR",
+              "GBP"
+            ],
+            "type": "string",
+            "description": "The currency the amounts inside `rounds` are in."
+          },
+          "rounds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoundResultDto"
+            }
+          },
+          "percentile": {
+            "type": "number",
+            "nullable": true,
+            "description": "\"You beat 78% of today’s players\". Daily sessions only."
+          },
+          "shareText": {
+            "type": "string",
+            "description": "Prefilled copy for the Share result button."
+          },
+          "match": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OpponentStateDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sessionId",
+          "mode",
+          "status",
+          "hits",
+          "roundCount",
+          "avgErrorPct",
+          "totalScore",
+          "currency",
+          "rounds",
+          "percentile",
+          "shareText"
+        ]
+      },
+      "CreateMatchDto": {
+        "type": "object",
+        "properties": {
+          "themeSlug": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "example": "vintage-finds"
+          }
+        },
+        "required": [
+          "themeSlug"
+        ]
+      },
+      "MatchPlayerDto": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "number",
+            "nullable": true
+          },
+          "username": {
+            "type": "string",
+            "nullable": true
+          },
+          "avatarSeed": {
+            "type": "string",
+            "nullable": true
+          },
+          "score": {
+            "type": "number",
+            "description": "Rounds won, not points — the match is best of 5."
+          },
+          "roundsPlayed": {
+            "type": "number",
+            "description": "Rounds this player has already bet on."
+          },
+          "online": {
+            "type": "boolean",
+            "description": "Connected to the match socket right now."
+          }
+        },
+        "required": [
+          "userId",
+          "username",
+          "avatarSeed",
+          "score",
+          "roundsPlayed",
+          "online"
+        ]
+      },
+      "MatchDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "inviteCode": {
+            "type": "string"
+          },
+          "deepLink": {
+            "type": "string",
+            "example": "cashortrash://match/K7PXQ2"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "active",
+              "complete"
+            ],
+            "type": "string"
+          },
+          "themeSlug": {
+            "type": "string"
+          },
+          "roundCount": {
+            "type": "number"
+          },
+          "host": {
+            "$ref": "#/components/schemas/MatchPlayerDto"
+          },
+          "guest": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MatchPlayerDto"
+              }
+            ]
+          },
+          "winnerUserId": {
+            "type": "number",
+            "nullable": true,
+            "description": "Null while in progress or on a draw."
+          }
+        },
+        "required": [
+          "id",
+          "inviteCode",
+          "deepLink",
+          "status",
+          "themeSlug",
+          "roundCount",
+          "host",
+          "guest",
+          "winnerUserId"
+        ]
+      },
+      "JoinMatchDto": {
+        "type": "object",
+        "properties": {
+          "inviteCode": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 12,
+            "example": "K7PXQ2"
+          }
+        },
+        "required": [
+          "inviteCode"
+        ]
+      },
+      "FriendDto": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "number"
+          },
+          "username": {
+            "type": "string",
+            "nullable": true
+          },
+          "avatarSeed": {
+            "type": "string"
+          },
+          "totalPoints": {
+            "type": "number"
+          },
+          "streakDays": {
+            "type": "number",
+            "description": "Zero once the streak lapses, whatever is stored."
+          },
+          "friendsSince": {
+            "format": "date-time",
+            "type": "string",
+            "description": "When the two became friends."
+          }
+        },
+        "required": [
+          "userId",
+          "username",
+          "avatarSeed",
+          "totalPoints",
+          "streakDays",
+          "friendsSince"
+        ]
+      },
+      "FriendListDto": {
+        "type": "object",
+        "properties": {
+          "friends": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FriendDto"
+            }
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "friends",
+          "count"
+        ]
+      },
+      "AddFriendDto": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "By handle, not by id. A player reads a username off a friend's screen or a\nshared result; they never see the numeric id, and accepting one here would\nturn the endpoint into an enumeration primitive for the whole user table.",
+            "minLength": 1,
+            "maxLength": 64,
+            "example": "maria"
+          }
+        },
+        "required": [
+          "username"
+        ]
+      },
+      "RegisterPushTokenDto": {
+        "type": "object",
+        "properties": {
+          "platform": {
+            "enum": [
+              "ios",
+              "android"
+            ],
+            "type": "string"
+          },
+          "token": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 512
+          },
+          "timezoneOffsetMinutes": {
+            "type": "number",
+            "minimum": -720,
+            "maximum": 840,
+            "description": "Minutes east of UTC. Buckets the nudge so it lands in the player’s evening.",
+            "example": 120
+          }
+        },
+        "required": [
+          "platform",
+          "token"
+        ]
+      },
+      "PushRegistrationDto": {
+        "type": "object",
+        "properties": {
+          "registered": {
+            "type": "boolean"
+          },
+          "platform": {
+            "enum": [
+              "ios",
+              "android"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "registered",
+          "platform"
+        ]
+      },
+      "HomePlayerDto": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "nullable": true
+          },
+          "avatarSeed": {
+            "type": "string"
+          },
+          "totalPoints": {
+            "type": "number",
+            "description": "The \"1,240 pts\" tag."
+          },
+          "streakDays": {
+            "type": "number",
+            "description": "Your streak. Zero once it lapses."
+          },
+          "bestRoundScore": {
+            "type": "number"
+          },
+          "globalRank": {
+            "type": "number",
+            "nullable": true,
+            "description": "Global rank, or null if unranked."
+          }
+        },
+        "required": [
+          "username",
+          "avatarSeed",
+          "totalPoints",
+          "streakDays",
+          "bestRoundScore",
+          "globalRank"
+        ]
+      },
+      "HomeDailyDto": {
+        "type": "object",
+        "properties": {
+          "challengeDate": {
+            "type": "string"
+          },
+          "resetsAt": {
+            "format": "date-time",
+            "type": "string",
+            "description": "The instant the challenge rolls over, UTC."
+          },
+          "secondsUntilReset": {
+            "type": "number",
+            "description": "Drives \"resets in 6h 12m\" without a client clock."
+          },
+          "sessionId": {
+            "type": "string",
+            "nullable": true,
+            "description": "Null until the player starts."
+          },
+          "roundsPlayed": {
+            "type": "number",
+            "description": "Rounds already played today — the progress dots."
+          },
+          "roundCount": {
+            "type": "number"
+          },
+          "isComplete": {
+            "type": "boolean"
+          },
+          "totalScore": {
+            "type": "number",
+            "description": "Score so far today."
+          },
+          "ctaLabel": {
+            "type": "string",
+            "example": "Continue · round 3",
+            "description": "Contextual label for the hero button."
+          }
+        },
+        "required": [
+          "challengeDate",
+          "resetsAt",
+          "secondsUntilReset",
+          "sessionId",
+          "roundsPlayed",
+          "roundCount",
+          "isComplete",
+          "totalScore",
+          "ctaLabel"
+        ]
+      },
+      "HomeResponseDto": {
+        "type": "object",
+        "properties": {
+          "greeting": {
+            "type": "string",
+            "example": "What’s it worth, Sam?"
+          },
+          "player": {
+            "$ref": "#/components/schemas/HomePlayerDto"
+          },
+          "daily": {
+            "$ref": "#/components/schemas/HomeDailyDto"
+          }
+        },
+        "required": [
+          "greeting",
+          "player",
+          "daily"
+        ]
+      },
+      "CacheManifestDto": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "type": "string",
+            "example": "b3f1c0a92d4e77aa",
+            "description": "Version of GET /themes. Moves whenever that payload would differ — a category appearing or being retired, a difficulty label changing, or any item being added or removed, since the mystery row carries a count of the whole catalogue."
+          },
+          "currency": {
+            "type": "string",
+            "example": "7c21ab90ff3d1e64",
+            "description": "Version of GET /currencies. Moves when a rate is refreshed, which is hourly at most."
+          }
+        },
+        "required": [
+          "catalog",
+          "currency"
+        ]
+      }
+    }
+  }
+}

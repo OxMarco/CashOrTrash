@@ -1,0 +1,29 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/main.ts",
+    "scripts/*.{ts,mjs}",
+    "test/**/*.e2e-spec.ts",
+    "test/support/global-{setup,teardown}.ts",
+    // Unit specs are entry points, not project files: several exist only to
+    // exercise a provider that nothing else imports directly.
+    "src/**/*.spec.ts"
+  ],
+  "project": ["src/**/*.ts", "scripts/**/*.{ts,mjs}", "test/**/*.ts"],
+  // Neither is imported, and both are load-bearing. `@fastify/cors` is what
+  // `app.enableCors()` registers under the hood, and `pino-pretty` is named as
+  // a transport target by string in app.module.ts.
+  "ignoreDependencies": ["@fastify/cors", "pino-pretty"],
+  // Dependency detection is what this is here for. The export rules are off
+  // deliberately: Nest resolves providers through DI and this app reads config
+  // through string keys (`config.getOrThrow('media')`), so knip cannot see
+  // either edge and reports most of `configuration.ts` and every filter and
+  // pipe as dead. Left on, the noise would train everyone to ignore the check
+  // that catches a real unused package.
+  "rules": {
+    "exports": "off",
+    "types": "off",
+    "enumMembers": "off",
+    "duplicates": "off"
+  }
+}

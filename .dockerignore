@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Version control and CI
+.git/
+.github/
+.claude/
+
+# Docs
+*.md
+!README.md
+
+# Tests — the image ships the app, not the suite that proves it works.
+test/
+coverage/
+
+# Build artifacts: `dist` is produced inside the builder stage. Copying a local
+# one in would let a stale laptop build silently become the deployed image.
+dist/
+*.tsbuildinfo
+
+# Secrets. Config reaches the container through compose `environment`/`env_file`
+# at run time, never baked into a layer.
+.env
+.env.*
+!.env.example
+
+# Compose and deployment tooling
+docker-compose*.yaml
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+Makefile
+scripts/
+backups/
+
+# Lint and formatting config
+.prettierrc*
+eslint.config.mjs
+
+# Editors and OS noise. The `**/` forms matter now that `items/` is copied in:
+# a bare pattern matches only at the build context root, so without them every
+# category directory ships its own .DS_Store.
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+**/.DS_Store
+Thumbs.db
+**/Thumbs.db
+
+# Logs and runtime files
+logs/
+*.log
+*.pid

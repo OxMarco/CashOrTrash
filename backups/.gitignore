@@ -1,0 +1,5 @@
+# Daily pg_dump output from the db-backup sidecar. Deliberately a bind mount
+# rather than a named volume, so losing the database volume does not also lose
+# the backups that exist to restore it.
+*
+!.gitignore

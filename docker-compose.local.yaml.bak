@@ -1,0 +1,80 @@
+# Local development stack. Two ways to use it:
+#
+#   make dev-deps   Postgres + Redis only — pair with `npm run start:dev` on the
+#                   host, which is the faster loop and what the README assumes.
+#   make dev        The app in a container too, hot-reloading from ./src.
+#
+# Ports and volume names match the stack this replaced, so an existing local
+# database is picked up rather than orphaned.
+services:
+  app:
+    build:
+      context: .
+      target: builder
+    ports:
+      - '${PORT:-3000}:3000'
+    volumes:
+      # Source mounted for hot reload; everything else the compiler needs is
+      # read-only because nothing should be writing to it.
+      - ./src:/app/src:delegated
+      - ./nest-cli.json:/app/nest-cli.json:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+      - ./tsconfig.build.json:/app/tsconfig.build.json:ro
+      # The builder image stops before the runtime stage's `COPY assets`, so
+      # without this mount the placeholder item photo 404s in local dev.
+      - ./assets:/app/assets:ro
+      # Same reason, for the admin panel's Handlebars templates: the view engine
+      # resolves them at `__dirname/../views`, so without this every admin page
+      # 500s at render time with ENOENT.
+      - ./views:/app/views:ro
+    command: ['npx', 'nest', 'start', '--watch']
+    env_file:
+      - .env
+    environment:
+      # Override the host-oriented values in .env with compose service names.
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: cashortrash-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cashortrash
+      POSTGRES_PASSWORD: cashortrash
+      POSTGRES_DB: cashortrash
+    ports:
+      - '5432:5432'
+    volumes:
+      - cashortrash-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cashortrash -d cashortrash']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: cashortrash-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - cashortrash-redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  cashortrash-pgdata:
+  cashortrash-redisdata:

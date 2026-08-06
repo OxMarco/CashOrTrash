@@ -1,0 +1,27 @@
+<!--
+  What a catalogue item shows before it has a photograph.
+
+  Source of record for `assets/photo-pending.webp`; regenerate with
+  `npm run assets:placeholder` after editing. Shapes only, no text: rendering a
+  typeface through librsvg depends on fontconfig finding it, which is true on a
+  developer's machine and reliably false inside a slim container.
+
+  Colours are the "Organic" system from `sources/ds/styles.css`, pre-washed —
+  this file skips the ingest filter, so it is authored at the muted values the
+  filter would otherwise produce.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="810" viewBox="0 0 1080 810">
+  <rect width="1080" height="810" fill="#e3d5be"/>
+
+  <!-- A frame, inset, echoing the card the photo sits in. -->
+  <rect x="150" y="130" width="780" height="550" rx="28"
+        fill="#d8c7ab" stroke="#bda98a" stroke-width="6"/>
+
+  <!-- The universal "an image belongs here": a sun over two hills. -->
+  <circle cx="378" cy="300" r="52" fill="#c9a67c"/>
+  <path d="M190 640 L420 380 L600 600 L700 500 L890 640 Z" fill="#b09a78"/>
+  <path d="M190 640 L420 380 L560 640 Z" fill="#a68f6c"/>
+
+  <rect x="150" y="130" width="780" height="550" rx="28"
+        fill="none" stroke="#bda98a" stroke-width="6"/>
+</svg>
