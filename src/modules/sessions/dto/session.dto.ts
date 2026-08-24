@@ -45,6 +45,67 @@ export class CreateSessionDto {
   inviteCode?: string;
 }
 
+/**
+ * The multiplier as a function of bet width — enough of it for a client to draw
+ * the same line the server will score on, and nothing else.
+ *
+ * This is the whole scoring rule the client is trusted with, and it is trusted
+ * with it for one reason: the tag under the slider has to read "×2.4" while the
+ * thumb is still moving. Everything else — base points, the hit test, the theme
+ * bonus, the total — is decided here and sent back as an answer.
+ *
+ * Shipping it as data rather than letting the client keep a copy of the numbers
+ * is not ceremony. A client with its own curve showed "×2.9" on a bet the server
+ * then paid ×2.5, because the two curves were written months apart and only one
+ * of them was ever retuned.
+ */
+export class MultiplierCurveDto {
+  @ApiProperty({
+    description: 'Multiplier at or below `narrowWidthPct` — the narrow end.',
+    example: 2.5,
+  })
+  @Expose()
+  max: number;
+
+  @ApiProperty({
+    description: 'Multiplier at or above `wideWidthPct` — the wide end.',
+    example: 0.2,
+  })
+  @Expose()
+  min: number;
+
+  @ApiProperty({
+    description: 'Bet width, as a share of the slider, that earns `max`.',
+    example: 0.05,
+  })
+  @Expose()
+  narrowWidthPct: number;
+
+  @ApiProperty({
+    description: 'Bet width, as a share of the slider, that earns `min`.',
+    example: 1,
+  })
+  @Expose()
+  wideWidthPct: number;
+
+  @ApiProperty({
+    description:
+      'Decimals the multiplier is rounded to before it is applied. Rounded ' +
+      'before, not after, so the arithmetic on the reveal is the arithmetic ' +
+      'the player watched.',
+    example: 1,
+  })
+  @Expose()
+  decimals: number;
+
+  @ApiProperty({
+    description: 'Which constant set produced this curve.',
+    example: 'v2',
+  })
+  @Expose()
+  scoringVersion: string;
+}
+
 export class PlaceBetDto {
   @ApiProperty({
     description: 'Lower bound, in cents, snapped to the increment.',
@@ -213,6 +274,19 @@ export class CurrentRoundDto {
   @ApiProperty({ nullable: true, description: 'Set for head-to-head rounds.' })
   @Expose()
   opponentUsername: string | null;
+
+  @ApiProperty({
+    type: () => MultiplierCurveDto,
+    description:
+      'The multiplier curve this round will be scored on. Sent because the ' +
+      'gameplay slider has to label the bet while the player is dragging it, ' +
+      'which is the one scoring decision a round trip cannot make. It travels ' +
+      'with the round rather than being fetched once, so it is always the ' +
+      'curve this round is actually scored on — see `scoringVersion`.',
+  })
+  @Expose()
+  @Type(() => MultiplierCurveDto)
+  multiplierCurve: MultiplierCurveDto;
 }
 
 export class RoundResultDto {
@@ -420,10 +494,54 @@ export class SessionSummaryDto {
 
   @ApiProperty({
     nullable: true,
-    description: '"You beat 78% of today’s players". Daily sessions only.',
+    description:
+      '"You beat 78% of today’s players" — the share of the *other* players ' +
+      'scored below this one. Daily sessions only.',
   })
   @Expose()
   percentile: number | null;
+
+  @ApiProperty({
+    nullable: true,
+    description:
+      'Competition rank on the day’s board: one more than the number of ' +
+      'players strictly ahead, so a tie shares a place. Null wherever ' +
+      '`percentile` is.',
+  })
+  @Expose()
+  rank: number | null;
+
+  @ApiProperty({
+    description:
+      'How many other players sit on exactly this score. Sent so a client can ' +
+      'say "tied for first" instead of "you beat 0%", which is what a ' +
+      'three-way tie at the top reads as otherwise.',
+  })
+  @Expose()
+  sharedWith: number;
+
+  @ApiProperty({
+    nullable: true,
+    description:
+      'Places gained on the day’s board against yesterday’s final standings ' +
+      '(positive = up). Null on the first day played, or wherever `rank` is.',
+  })
+  @Expose()
+  rankDelta: number | null;
+
+  @ApiProperty({
+    description:
+      'False when this daily score was kept off the board because the account ' +
+      'is still inside its probation window. The score still counts toward the ' +
+      'player’s own totals and streak; it just does not rank. True everywhere ' +
+      'else, including on modes that are not ranked at all — so a client can ' +
+      'read it as "is there a reason there is no rank" rather than as a mode ' +
+      'test. Sent because an unranked new account and a board that has not ' +
+      'answered yet both arrive as a null percentile, and only one of them is ' +
+      'worth explaining to the player.',
+  })
+  @Expose()
+  leaderboardEligible: boolean;
 
   @ApiProperty({ description: 'Prefilled copy for the Share result button.' })
   @Expose()

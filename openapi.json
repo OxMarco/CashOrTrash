@@ -21,45 +21,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TokenPairDto"
+                  "$ref": "#/components/schemas/AccessTokenDto"
                 }
               }
             }
           }
         },
-        "summary": "Exchange a device id for a token pair, registering on first sight.",
-        "tags": [
-          "auth"
-        ]
-      }
-    },
-    "/v1/auth/refresh": {
-      "post": {
-        "operationId": "AuthController_refresh",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RefreshTokenDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TokenPairDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Trade a refresh token for a fresh pair.",
+        "summary": "Exchange a device id for a short-lived access token, registering on first sight.",
         "tags": [
           "auth"
         ]
@@ -67,8 +35,41 @@
     },
     "/v1/me": {
       "get": {
+        "description": "`?currency` and `?lang` shape `lastDailyMiss` only — the amounts on that card and the item’s title. Dollars and English by default.",
         "operationId": "MeController_me",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "currency",
+            "required": false,
+            "in": "query",
+            "description": "Omitted means US dollars — the unit prices are stored in.",
+            "schema": {
+              "default": "USD",
+              "type": "string",
+              "enum": [
+                "USD",
+                "EUR",
+                "GBP"
+              ]
+            }
+          },
+          {
+            "name": "lang",
+            "required": false,
+            "in": "query",
+            "description": "Omitted means English. An item with no copy in the language asked for falls back to its English title and description rather than 404ing.",
+            "schema": {
+              "default": "en",
+              "type": "string",
+              "enum": [
+                "en",
+                "es",
+                "pt",
+                "it"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -82,6 +83,19 @@
           }
         },
         "summary": "Profile and the stats card on Home.",
+        "tags": [
+          "users"
+        ]
+      },
+      "delete": {
+        "operationId": "MeController_deleteAccount",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Permanently delete this player and their gameplay data.",
         "tags": [
           "users"
         ]
@@ -138,6 +152,31 @@
         "summary": "Live availability check for the onboarding field.",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/v1/currencies": {
+      "get": {
+        "operationId": "CurrencyController_currencies",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CurrencyDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "The currencies a round may be played in, and what a dollar buys of each.",
+        "tags": [
+          "currency"
         ]
       }
     },
@@ -203,31 +242,6 @@
         ]
       }
     },
-    "/v1/currencies": {
-      "get": {
-        "operationId": "CurrencyController_currencies",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/CurrencyDto"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "summary": "The currencies a round may be played in, and what a dollar buys of each.",
-        "tags": [
-          "currency"
-        ]
-      }
-    },
     "/v1/sessions": {
       "post": {
         "operationId": "SessionsController_create",
@@ -262,7 +276,7 @@
     },
     "/v1/sessions/{id}/current": {
       "get": {
-        "description": "Amounts come back in `?currency`, dollars by default. Bet in the same one: the slider grid differs per currency, and a bet snapped to the euro grid is not on the dollar one.",
+        "description": "Amounts come back in `?currency`, dollars by default. Bet in the same one: the slider grid differs per currency, and a bet snapped to the euro grid is not on the dollar one. The title and description come back in `?lang`, English by default and English wherever an item has no copy in the language asked for.",
         "operationId": "SessionsController_current",
         "parameters": [
           {
@@ -285,6 +299,22 @@
                 "USD",
                 "EUR",
                 "GBP"
+              ]
+            }
+          },
+          {
+            "name": "lang",
+            "required": false,
+            "in": "query",
+            "description": "Omitted means English. An item with no copy in the language asked for falls back to its English title and description rather than 404ing.",
+            "schema": {
+              "default": "en",
+              "type": "string",
+              "enum": [
+                "en",
+                "es",
+                "pt",
+                "it"
               ]
             }
           }
@@ -325,6 +355,22 @@
             "in": "path",
             "schema": {
               "type": "number"
+            }
+          },
+          {
+            "name": "lang",
+            "required": false,
+            "in": "query",
+            "description": "Omitted means English. An item with no copy in the language asked for falls back to its English title and description rather than 404ing.",
+            "schema": {
+              "default": "en",
+              "type": "string",
+              "enum": [
+                "en",
+                "es",
+                "pt",
+                "it"
+              ]
             }
           }
         ],
@@ -380,6 +426,22 @@
                 "USD",
                 "EUR",
                 "GBP"
+              ]
+            }
+          },
+          {
+            "name": "lang",
+            "required": false,
+            "in": "query",
+            "description": "Omitted means English. An item with no copy in the language asked for falls back to its English title and description rather than 404ing.",
+            "schema": {
+              "default": "en",
+              "type": "string",
+              "enum": [
+                "en",
+                "es",
+                "pt",
+                "it"
               ]
             }
           }
@@ -495,6 +557,35 @@
         "tags": [
           "matches"
         ]
+      },
+      "delete": {
+        "operationId": "MatchesController_cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Withdraw a challenge nobody has joined yet. Host only.",
+        "tags": [
+          "matches"
+        ]
       }
     },
     "/v1/friends": {
@@ -600,6 +691,19 @@
           }
         },
         "summary": "Register a push token. Called only after the player taps \"Notify me\".",
+        "tags": [
+          "notifications"
+        ]
+      },
+      "delete": {
+        "operationId": "NotificationsController_unregister",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Disable all push notifications for this player.",
         "tags": [
           "notifications"
         ]
@@ -827,7 +931,7 @@
             }
           }
         },
-        "summary": "Readiness probe — database, Redis and queue.",
+        "summary": "Readiness probe — database, Redis, queue and playable catalogue.",
         "tags": [
           "health"
         ]
@@ -867,13 +971,10 @@
           "deviceId"
         ]
       },
-      "TokenPairDto": {
+      "AccessTokenDto": {
         "type": "object",
         "properties": {
           "accessToken": {
-            "type": "string"
-          },
-          "refreshToken": {
             "type": "string"
           },
           "expiresIn": {
@@ -892,23 +993,83 @@
         },
         "required": [
           "accessToken",
-          "refreshToken",
           "expiresIn",
           "isNewPlayer",
           "username"
         ]
       },
-      "RefreshTokenDto": {
+      "DailyProgressDto": {
         "type": "object",
         "properties": {
-          "refreshToken": {
+          "challengeDate": {
             "type": "string",
-            "minLength": 16,
-            "maxLength": 4096
+            "description": "The UTC challenge day this describes."
+          },
+          "roundsPlayed": {
+            "type": "number",
+            "description": "Rounds already bet on today, 0 if none."
+          },
+          "roundCount": {
+            "type": "number"
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "True once every round has been played."
           }
         },
         "required": [
-          "refreshToken"
+          "challengeDate",
+          "roundsPlayed",
+          "roundCount",
+          "complete"
+        ]
+      },
+      "LastDailyMissDto": {
+        "type": "object",
+        "properties": {
+          "challengeDate": {
+            "type": "string",
+            "description": "The UTC challenge day the round belongs to."
+          },
+          "itemId": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "photoUrl": {
+            "type": "string"
+          },
+          "currency": {
+            "enum": [
+              "USD",
+              "EUR",
+              "GBP"
+            ],
+            "type": "string"
+          },
+          "loCents": {
+            "type": "number",
+            "description": "The bet’s low edge, minor units."
+          },
+          "hiCents": {
+            "type": "number",
+            "description": "The bet’s high edge, minor units."
+          },
+          "truePriceCents": {
+            "type": "number",
+            "description": "What it actually went for, minor units."
+          }
+        },
+        "required": [
+          "challengeDate",
+          "itemId",
+          "title",
+          "photoUrl",
+          "currency",
+          "loCents",
+          "hiCents",
+          "truePriceCents"
         ]
       },
       "MeDto": {
@@ -942,6 +1103,24 @@
           "createdAt": {
             "format": "date-time",
             "type": "string"
+          },
+          "dailyProgress": {
+            "description": "Progress through today’s challenge. Present even before it is started, so a client can render \"Play\" and \"Continue · round 3\" from one answer.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DailyProgressDto"
+              }
+            ]
+          },
+          "lastDailyMiss": {
+            "nullable": true,
+            "description": "The round of the last finished daily before today that the player was furthest off on, relative to the price. Null with no finished daily behind them, or one they hit every round of.",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LastDailyMissDto"
+              }
+            ]
           }
         },
         "required": [
@@ -952,7 +1131,9 @@
           "streakDays",
           "bestRoundScore",
           "globalRank",
-          "createdAt"
+          "createdAt",
+          "dailyProgress",
+          "lastDailyMiss"
         ]
       },
       "ClaimUsernameDto": {
@@ -1000,6 +1181,40 @@
           "normalised",
           "reason",
           "code"
+        ]
+      },
+      "CurrencyDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "enum": [
+              "USD",
+              "EUR",
+              "GBP"
+            ],
+            "type": "string",
+            "example": "EUR"
+          },
+          "symbol": {
+            "type": "string",
+            "example": "€"
+          },
+          "rate": {
+            "type": "number",
+            "example": 0.92,
+            "description": "Units of this currency to one US dollar. Always 1 for USD."
+          },
+          "asOf": {
+            "type": "string",
+            "example": "2026-08-03T00:00:00.000Z",
+            "description": "When the provider published this rate. The epoch means no live fetch has landed yet and the configured fallback is standing in."
+          }
+        },
+        "required": [
+          "code",
+          "symbol",
+          "rate",
+          "asOf"
         ]
       },
       "LeaderboardRowDto": {
@@ -1100,6 +1315,10 @@
           },
           "totalPlayers": {
             "type": "number"
+          },
+          "tiedAtTop": {
+            "type": "number",
+            "description": "How many players share the top score — 1 when first place is undisputed, 0 on an empty board. Lets a client caption a tied podium."
           }
         },
         "required": [
@@ -1108,7 +1327,8 @@
           "rows",
           "me",
           "neighbours",
-          "totalPlayers"
+          "totalPlayers",
+          "tiedAtTop"
         ]
       },
       "ThemeDto": {
@@ -1128,13 +1348,22 @@
           "iconName": {
             "type": "string",
             "enum": [
+              "apple",
               "basket",
+              "bottle-wine",
+              "calendar",
               "camera",
+              "car",
               "gem",
               "house",
+              "pencil",
+              "plane",
+              "plug-zap",
               "shuffle",
-              "calendar",
-              "pencil"
+              "ship",
+              "toy-brick",
+              "wallet-cards",
+              "watch"
             ],
             "description": "Glyph for the card. A name from a fixed set the client ships; anything else it does not recognise falls back to its default."
           },
@@ -1167,40 +1396,6 @@
           "bonusPct",
           "difficultyLabel",
           "itemCount"
-        ]
-      },
-      "CurrencyDto": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "enum": [
-              "USD",
-              "EUR",
-              "GBP"
-            ],
-            "type": "string",
-            "example": "EUR"
-          },
-          "symbol": {
-            "type": "string",
-            "example": "€"
-          },
-          "rate": {
-            "type": "number",
-            "example": 0.92,
-            "description": "Units of this currency to one US dollar. Always 1 for USD."
-          },
-          "asOf": {
-            "type": "string",
-            "example": "2026-08-03T00:00:00.000Z",
-            "description": "When the provider published this rate. The epoch means no live fetch has landed yet and the configured fallback is standing in."
-          }
-        },
-        "required": [
-          "code",
-          "symbol",
-          "rate",
-          "asOf"
         ]
       },
       "CreateSessionDto": {
@@ -1293,6 +1488,49 @@
           "resumed"
         ]
       },
+      "MultiplierCurveDto": {
+        "type": "object",
+        "properties": {
+          "max": {
+            "type": "number",
+            "description": "Multiplier at or below `narrowWidthPct` — the narrow end.",
+            "example": 2.5
+          },
+          "min": {
+            "type": "number",
+            "description": "Multiplier at or above `wideWidthPct` — the wide end.",
+            "example": 0.2
+          },
+          "narrowWidthPct": {
+            "type": "number",
+            "description": "Bet width, as a share of the slider, that earns `max`.",
+            "example": 0.05
+          },
+          "wideWidthPct": {
+            "type": "number",
+            "description": "Bet width, as a share of the slider, that earns `min`.",
+            "example": 1
+          },
+          "decimals": {
+            "type": "number",
+            "description": "Decimals the multiplier is rounded to before it is applied. Rounded before, not after, so the arithmetic on the reveal is the arithmetic the player watched.",
+            "example": 1
+          },
+          "scoringVersion": {
+            "type": "string",
+            "description": "Which constant set produced this curve.",
+            "example": "v2"
+          }
+        },
+        "required": [
+          "max",
+          "min",
+          "narrowWidthPct",
+          "wideWidthPct",
+          "decimals",
+          "scoringVersion"
+        ]
+      },
       "CurrentRoundDto": {
         "type": "object",
         "properties": {
@@ -1369,6 +1607,14 @@
             "type": "string",
             "nullable": true,
             "description": "Set for head-to-head rounds."
+          },
+          "multiplierCurve": {
+            "description": "The multiplier curve this round will be scored on. Sent because the gameplay slider has to label the bet while the player is dragging it, which is the one scoring decision a round trip cannot make. It travels with the round rather than being fetched once, so it is always the curve this round is actually scored on — see `scoringVersion`.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MultiplierCurveDto"
+              }
+            ]
           }
         },
         "required": [
@@ -1389,7 +1635,8 @@
           "roundSeconds",
           "expiresAt",
           "remainingMs",
-          "opponentUsername"
+          "opponentUsername",
+          "multiplierCurve"
         ]
       },
       "PlaceBetDto": {
@@ -1640,7 +1887,25 @@
           "percentile": {
             "type": "number",
             "nullable": true,
-            "description": "\"You beat 78% of today’s players\". Daily sessions only."
+            "description": "\"You beat 78% of today’s players\" — the share of the *other* players scored below this one. Daily sessions only."
+          },
+          "rank": {
+            "type": "number",
+            "nullable": true,
+            "description": "Competition rank on the day’s board: one more than the number of players strictly ahead, so a tie shares a place. Null wherever `percentile` is."
+          },
+          "sharedWith": {
+            "type": "number",
+            "description": "How many other players sit on exactly this score. Sent so a client can say \"tied for first\" instead of \"you beat 0%\", which is what a three-way tie at the top reads as otherwise."
+          },
+          "rankDelta": {
+            "type": "number",
+            "nullable": true,
+            "description": "Places gained on the day’s board against yesterday’s final standings (positive = up). Null on the first day played, or wherever `rank` is."
+          },
+          "leaderboardEligible": {
+            "type": "boolean",
+            "description": "False when this daily score was kept off the board because the account is still inside its probation window. The score still counts toward the player’s own totals and streak; it just does not rank. True everywhere else, including on modes that are not ranked at all — so a client can read it as \"is there a reason there is no rank\" rather than as a mode test. Sent because an unranked new account and a board that has not answered yet both arrive as a null percentile, and only one of them is worth explaining to the player."
           },
           "shareText": {
             "type": "string",
@@ -1667,6 +1932,10 @@
           "currency",
           "rounds",
           "percentile",
+          "rank",
+          "sharedWith",
+          "rankDelta",
+          "leaderboardEligible",
           "shareText"
         ]
       },
@@ -1738,7 +2007,8 @@
             "enum": [
               "pending",
               "active",
-              "complete"
+              "complete",
+              "expired"
             ],
             "type": "string"
           },
@@ -1881,6 +2151,17 @@
             "maximum": 840,
             "description": "Minutes east of UTC. Buckets the nudge so it lands in the player’s evening.",
             "example": 120
+          },
+          "locale": {
+            "enum": [
+              "en",
+              "es",
+              "pt",
+              "it"
+            ],
+            "type": "string",
+            "default": "en",
+            "description": "The language to send this device’s nudges in. Push copy is composed on the server long after the app last ran, so it cannot be read from the request that receives it."
           }
         },
         "required": [

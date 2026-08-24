@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -15,7 +16,10 @@ import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { Public } from 'src/common/decorators/public.decorator';
 import { toDto } from 'src/common/serialization/to-dto';
 import { todayUtc } from 'src/common/utils/date.util';
+import { DEFAULT_LANGUAGE } from '../catalog/language.constants';
+import { DEFAULT_CURRENCY } from '../currency/currency.constants';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
+import { RoundQueryDto } from '../sessions/dto/round-query.dto';
 import {
   ClaimUsernameDto,
   MeDto,
@@ -40,15 +44,35 @@ export class MeController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'Profile and the stats card on Home.' })
-  async me(@CurrentUser('id') userId: number): Promise<MeDto> {
+  @ApiOperation({
+    summary: 'Profile and the stats card on Home.',
+    description:
+      '`?currency` and `?lang` shape `lastDailyMiss` only — the amounts on ' +
+      'that card and the item’s title. Dollars and English by default.',
+  })
+  async me(
+    @CurrentUser('id') userId: number,
+    @Query() query: RoundQueryDto,
+  ): Promise<MeDto> {
+    const today = todayUtc();
     const user = await this.users.getById(userId);
-    const globalRank = await this.leaderboard.getRank('today', userId);
+    const [globalRank, dailyProgress, lastDailyMiss] = await Promise.all([
+      this.leaderboard.getRank('today', userId),
+      this.users.dailyProgress(userId, today),
+      this.users.lastDailyMiss(
+        userId,
+        today,
+        query.currency ?? DEFAULT_CURRENCY,
+        query.lang ?? DEFAULT_LANGUAGE,
+      ),
+    ]);
 
     return toDto(MeDto, {
       ...user,
-      streakDays: this.users.effectiveStreak(user, todayUtc()),
+      streakDays: this.users.effectiveStreak(user, today),
       globalRank,
+      dailyProgress,
+      lastDailyMiss,
     });
   }
 
@@ -60,14 +84,35 @@ export class MeController {
     @CurrentUser('id') userId: number,
     @Body() dto: ClaimUsernameDto,
   ): Promise<MeDto> {
+    const today = todayUtc();
     const user = await this.users.claimUsername(userId, dto.username);
-    const globalRank = await this.leaderboard.getRank('today', userId);
+    const [globalRank, dailyProgress] = await Promise.all([
+      this.leaderboard.getRank('today', userId),
+      this.users.dailyProgress(userId, today),
+    ]);
 
     return toDto(MeDto, {
       ...user,
-      streakDays: this.users.effectiveStreak(user, todayUtc()),
+      streakDays: this.users.effectiveStreak(user, today),
       globalRank,
+      dailyProgress,
+      // The card this feeds is Home's, and Home re-reads `/me` after a claim.
+      lastDailyMiss: null,
     });
+  }
+
+  @Delete()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Permanently delete this player and their gameplay data.',
+  })
+  async deleteAccount(@CurrentUser('id') userId: number): Promise<void> {
+    await this.users.deleteAccount(userId);
+
+    // Redis is a serving cache, not part of the deletion transaction. The
+    // authoritative data is already gone even if this best-effort cleanup has
+    // to wait for cache TTLs after an outage.
+    await this.leaderboard.removeUser(userId).catch(() => undefined);
   }
 }
 

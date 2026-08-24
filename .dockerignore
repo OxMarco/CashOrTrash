@@ -39,9 +39,8 @@ backups/
 .prettierrc*
 eslint.config.mjs
 
-# Editors and OS noise. The `**/` forms matter now that `items/` is copied in:
-# a bare pattern matches only at the build context root, so without them every
-# category directory ships its own .DS_Store.
+# Editors and OS noise. The `**/` forms are kept deliberately: a bare pattern
+# matches only at the build context root, and `assets/` is copied in wholesale.
 .idea/
 .vscode/
 *.swp

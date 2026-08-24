@@ -85,10 +85,11 @@ describe('leaderboard', () => {
    * Ties are where a cache and its source of truth usually part company, and
    * where they part company *consistently* rather than randomly — so a bug
    * here looks like "the leaderboard is occasionally off by one" rather than
-   * like a bug. Redis reads everything through `ZREV*`, which returns equal
-   * scores in descending member order; Postgres has to be told to match.
+   * like a bug. A tie shares a rank in both stores, and the *row order* of
+   * a tie — which Redis reads through `ZREV*`, returning equal scores in
+   * descending member order — is what Postgres has to be told to match.
    */
-  it('breaks score ties the same way in both stores', async () => {
+  it('shares a rank across a tie, and orders the tie the same way in both stores', async () => {
     const players = await playField(['tiea', 'tieb', 'tiec']);
     const date = todayUtc();
 
@@ -100,17 +101,25 @@ describe('leaderboard', () => {
     await leaderboard.rebuild('today');
 
     const fromPostgres = await leaderboard.ranksFromPostgres(date);
+    expect(fromPostgres.map((row) => row.rank)).toEqual([1, 1, 1]);
     for (const row of fromPostgres) {
-      expect(await leaderboard.getRank('today', row.userId)).toBe(row.rank);
+      expect(await leaderboard.getRank('today', row.userId)).toBe(1);
     }
 
-    // And the tie really did resolve by user id, not arbitrarily. Descending,
-    // because every read goes through ZREVRANGE and that is the order it
-    // produces over padded members.
-    const ordered = [...fromPostgres].sort((a, b) => a.rank - b.rank);
-    expect(ordered.map((row) => row.userId)).toEqual(
-      [...ordered].sort((a, b) => b.userId - a.userId).map((row) => row.userId),
+    // The rows of the tie come out in descending user id, because every read
+    // goes through ZREVRANGE and that is the order it produces over padded
+    // members — and the served board must show them the same way.
+    expect(fromPostgres.map((row) => row.userId)).toEqual(
+      [...fromPostgres]
+        .sort((a, b) => b.userId - a.userId)
+        .map((row) => row.userId),
     );
+    const board = await players[0].api.get('/v1/leaderboard?scope=today');
+    expect(board.status).toBe(200);
+    expect(board.body.podium.map((row: any) => row.rank)).toEqual([1, 1, 1]);
+    expect(board.body.me.rank).toBe(1);
+    // Nobody beaten, but nobody ahead either.
+    expect(board.body.me.percentile).toBe(0);
   });
 
   it('serves a board with a podium, the player’s own row and a percentile', async () => {
@@ -157,8 +166,10 @@ describe('leaderboard', () => {
       const row = fromPostgres.find((r) => r.userId === player.userId)!;
       const beaten = fromPostgres.filter((r) => r.score < row.score).length;
 
+      // Measured against the *other* players: the top of a field of four has
+      // beaten all three of them, not 75% of four.
       expect(await leaderboard.getPercentile('today', player.userId)).toBe(
-        Math.round((beaten / total) * 100),
+        Math.round((beaten / (total - 1)) * 100),
       );
     }
   });
@@ -175,11 +186,31 @@ describe('leaderboard', () => {
     await ctx.redis.del(dailyKey(yesterday));
 
     expect(
-      await leaderboard.getDailyPercentile(players[0].userId, yesterday),
-    ).toBe(0);
+      await leaderboard.getDailyStanding(players[0].userId, yesterday),
+    ).toEqual({ rank: 3, sharedWith: 0, percentile: 0 });
     expect(
-      await leaderboard.getDailyPercentile(players[2].userId, yesterday),
-    ).toBe(67);
+      await leaderboard.getDailyStanding(players[2].userId, yesterday),
+    ).toEqual({ rank: 1, sharedWith: 0, percentile: 100 });
+  });
+
+  // The summary is fetched the instant the last bet lands, and the Redis
+  // mirror of the score arrives by an async event a beat later. The row is
+  // already there; the standing has to come from it rather than be null.
+  it('reports today’s standing from the row while the Redis mirror is behind', async () => {
+    const players = await playField(['racea', 'raceb']);
+    const today = todayUtc();
+    await ctx.redis.zrem(
+      dailyKey(today),
+      ...players.map((p) => String(p.userId).padStart(10, '0')),
+    );
+
+    const standing = await leaderboard.getDailyStanding(
+      players[0].userId,
+      today,
+    );
+    expect(standing).not.toBeNull();
+    expect(standing!.rank).toBeGreaterThanOrEqual(1);
+    expect(standing!.sharedWith + 1).toBeLessThanOrEqual(2);
   });
 
   describe('the weekly board', () => {

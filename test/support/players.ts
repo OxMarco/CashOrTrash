@@ -5,7 +5,6 @@ export interface Player {
   userId: number;
   deviceId: string;
   accessToken: string;
-  refreshToken: string;
   username: string | null;
 }
 
@@ -48,7 +47,6 @@ export async function registerPlayer(
     userId: subjectOf(auth.body.accessToken),
     deviceId,
     accessToken: auth.body.accessToken,
-    refreshToken: auth.body.refreshToken,
     username: claimed,
   };
 }

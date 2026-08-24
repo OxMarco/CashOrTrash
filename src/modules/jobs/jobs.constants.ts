@@ -13,20 +13,37 @@ export const JOBS = {
   PUSH_DAILY_NUDGE: 'push-daily-nudge',
   LEADERBOARD_REBUILD: 'leaderboard-rebuild',
   /**
-   * Not scheduled — enqueued once per boot, so it is absent from
-   * `JOB_SCHEDULES`. The catalogue changes when a deploy ships new files, which
-   * is an event and not an hour of the day.
+   * Ages out `user.registrationIp`, the only retained network identifier. It
+   * exists so an abuse investigation can ask "how many accounts came
+   * from this address"; that question is only ever asked about recent
+   * registrations, so keeping the answer for the life of the account is
+   * collecting something for no purpose.
    */
-  CATALOGUE_IMPORT: 'catalogue-import',
+  REGISTRATION_IP_PRUNE: 'registration-ip-prune',
+  /**
+   * Flips invites nobody answered to `expired`. Hygiene rather than
+   * enforcement: `inviteHasExpired` already refuses a stale code the moment
+   * the deadline passes, so this exists to keep the stored status honest and
+   * the pending set the size of the genuinely open invites.
+   */
+  MATCH_INVITE_EXPIRE: 'match-invite-expire',
+  /**
+   * Not scheduled — enqueued by the admin portal when an item is uploaded, so
+   * it is absent from `JOB_SCHEDULES`. New catalogue content is an event and
+   * not an hour of the day.
+   */
+  ITEM_COPY: 'item-copy',
 } as const;
 
 /**
- * The advisory-lock key the import takes, so exactly one replica runs it.
+ * The advisory-lock key the copy pass takes, so exactly one replica runs it.
  *
  * An arbitrary constant; it only has to be stable and not collide with another
- * advisory lock in this database, and it is the only one.
+ * advisory lock in this database, and it is the only one. It matters more here
+ * than it did for the import: two replicas running the pass together would both
+ * bill OpenAI for the same items.
  */
-export const CATALOGUE_IMPORT_LOCK = 8_419_207;
+export const ITEM_COPY_LOCK = 8_419_207;
 
 export type JobName = (typeof JOBS)[keyof typeof JOBS];
 
@@ -42,4 +59,8 @@ export const JOB_SCHEDULES: Array<{ name: JobName; pattern: string }> = [
   { name: JOBS.LEADERBOARD_REBUILD, pattern: '15 * * * *' },
   // Hourly, but only fires the timezone buckets currently at the target hour.
   { name: JOBS.PUSH_DAILY_NUDGE, pattern: '0 * * * *' },
+  // Daily, in the quiet hour before the challenge generator.
+  { name: JOBS.REGISTRATION_IP_PRUNE, pattern: '30 2 * * *' },
+  // Alongside it, in the same quiet hour.
+  { name: JOBS.MATCH_INVITE_EXPIRE, pattern: '45 2 * * *' },
 ];

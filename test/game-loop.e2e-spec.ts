@@ -66,6 +66,8 @@ describe('the game loop', () => {
           matchId: row.matchId,
         },
         Number(row.itemId),
+        ctx.app.get(ConfigService).getOrThrow<AppConfig>('app')
+          .sliderSeedSecret,
       ),
     );
 
@@ -440,7 +442,12 @@ describe('the game loop', () => {
 
       const again = await player.api.get(`/v1/sessions/${sessionId}/current`);
       expect(again.status).toBe(200);
-      expect(again.body.remainingMs).toBeLessThanOrEqual(4_000);
+      // `ageRound` writes Postgres' `NOW()` while `remainingMs` is measured
+      // against Node's clock, and the container's runs tens of milliseconds
+      // ahead of the host's — so six seconds of ageing reads back as slightly
+      // less. The slack absorbs that skew without weakening what is being
+      // asserted: a refreshed deadline would hand back the full 10,000.
+      expect(again.body.remainingMs).toBeLessThanOrEqual(4_500);
     });
 
     it('scores nothing for a bet that arrives after the deadline', async () => {
@@ -675,6 +682,81 @@ describe('the game loop', () => {
 
       expect(summary.status).toBe(200);
       expect(summary.body.percentile).toBe(0);
+    });
+  });
+
+  /**
+   * The mystery mix advertises "+10% point bonus" on its picker card, and the
+   * only place that promise can be kept is the score. Every layer between the
+   * two is easy to get right in isolation and still not add up: the theme row
+   * carries `bonusPct`, `createQuick` stores the theme id, and `placeBet` looks
+   * the bonus back up — but a session that dropped its theme id, or a mystery
+   * row seeded before the bonus existed, pays nothing and says nothing.
+   *
+   * So this asserts the arithmetic rather than the plumbing: points have to be
+   * base x multiplier x 1.1, not base x multiplier.
+   */
+  describe('the mystery mix bonus', () => {
+    it('pays the advertised bonus on a scored round', async () => {
+      const player = await registerPlayer(api, 'mystery-device-0001');
+
+      const themes = await player.api.get('/v1/themes');
+      const mystery = themes.body.find((theme: any) => theme.isMystery);
+      expect(mystery.bonusPct).toBeGreaterThan(0);
+
+      const session = await player.api.post('/v1/sessions', {
+        mode: 'quick',
+        themeSlug: mystery.slug,
+      });
+      expect(session.status).toBe(201);
+
+      const current = await player.api.get(
+        `/v1/sessions/${session.body.id}/current`,
+      );
+      expect(current.status).toBe(200);
+
+      const [item] = await ctx.dataSource.query(
+        'SELECT "truePriceCents" FROM item WHERE id = $1',
+        [current.body.itemId],
+      );
+      const price = Number(item.truePriceCents);
+
+      // A bet that hits, centred on the answer, so base points are non-zero and
+      // the bonus has something to act on. Snapped to the increment from the
+      // floor, which is what `validateBet` measures against.
+      const {
+        sliderMinCents: min,
+        sliderMaxCents: max,
+        incrementCents,
+      } = current.body;
+      const snap = (value: number) =>
+        Math.min(
+          max,
+          Math.max(
+            min,
+            min + Math.round((value - min) / incrementCents) * incrementCents,
+          ),
+        );
+      const reach = incrementCents * 2;
+      const bet = {
+        loCents: snap(price - reach),
+        hiCents: snap(price + reach),
+      };
+
+      const reveal = await player.api.post(
+        `/v1/sessions/${session.body.id}/rounds/0/bet`,
+        bet,
+      );
+
+      expect(reveal.status).toBe(200);
+      expect(reveal.body.round.hit).toBe(true);
+      expect(reveal.body.round.basePoints).toBeGreaterThan(0);
+
+      const { basePoints, multiplier, points } = reveal.body.round;
+      expect(points).toBe(
+        Math.round(basePoints * multiplier * (1 + mystery.bonusPct)),
+      );
+      expect(points).toBeGreaterThan(Math.round(basePoints * multiplier));
     });
   });
 });

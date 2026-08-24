@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 
 import { toDto } from 'src/common/serialization/to-dto';
+import { DEFAULT_LANGUAGE } from '../catalog/language.constants';
+import { nudgeCopy, type NudgeKind } from './nudge-copy';
 import { addDays, todayUtc } from 'src/common/utils/date.util';
 import {
   GameMode,
@@ -12,7 +14,7 @@ import {
 import { User } from '../users/entities/user.entity';
 import { PushRegistrationDto, RegisterPushTokenDto } from './dto/push.dto';
 import { PushToken } from './entities/push-token.entity';
-import { PushSender } from './push-sender';
+import { PushSendResult, PushSender } from './push-sender';
 
 /** Local hour we aim for when nudging about tomorrow's challenge. */
 const NUDGE_LOCAL_HOUR = 19;
@@ -47,11 +49,16 @@ export class NotificationsService {
         platform: dto.platform,
         token: dto.token,
         timezoneOffsetMinutes: dto.timezoneOffsetMinutes ?? 0,
+        locale: dto.locale ?? DEFAULT_LANGUAGE,
         active: true,
       })
       // A token can migrate between users on a shared device; last writer wins.
+      // `locale` is in the update list so that changing the language in the app
+      // reaches the nudges — the app re-registers on launch, and a column left
+      // out here would keep sending in whatever language the device was first
+      // set up in.
       .orUpdate(
-        ['userId', 'platform', 'timezoneOffsetMinutes', 'active'],
+        ['userId', 'platform', 'timezoneOffsetMinutes', 'locale', 'active'],
         ['token'],
       )
       .execute();
@@ -64,6 +71,10 @@ export class NotificationsService {
 
   async deactivate(token: string): Promise<void> {
     await this.tokens.update({ token }, { active: false });
+  }
+
+  async deactivateForUser(userId: number): Promise<void> {
+    await this.tokens.update({ userId }, { active: false });
   }
 
   /**
@@ -87,6 +98,7 @@ export class NotificationsService {
 
     const played = await this.usersWhoPlayedToday([...byUser.keys()]);
     let sent = 0;
+    let failed = 0;
 
     for (const [userId, userTokens] of byUser) {
       const hasPlayed = played.has(userId);
@@ -102,27 +114,56 @@ export class NotificationsService {
       // streak on the line.
       if (hasPlayed && !streakAtRisk) continue;
 
-      const message = streakAtRisk
-        ? {
-            title: `Your ${user.streakDays}-day streak is at risk`,
-            body: 'Five items, two minutes. Keep it alive.',
-            data: { kind: 'streak_at_risk' },
-          }
-        : {
-            title: 'Today’s five finds are up',
-            body: 'Same items for everyone. How sharp is your eye?',
-            data: { kind: 'daily_ready' },
-          };
+      const kind: NudgeKind = streakAtRisk ? 'streak_at_risk' : 'daily_ready';
 
-      const result = await this.sender.send(userTokens, message);
-      sent += result.sent;
+      // One send per language this player's devices are set up in, rather than
+      // one per player. A phone in Italian and a tablet in English belong to
+      // the same account and want different words, and grouping by language is
+      // what stops a second device from silently deciding the first one's.
+      const byLocale = new Map<string, PushToken[]>();
+      for (const token of userTokens) {
+        byLocale.set(token.locale, [
+          ...(byLocale.get(token.locale) ?? []),
+          token,
+        ]);
+      }
 
-      for (const invalid of result.invalidTokens) {
-        await this.deactivate(invalid);
+      for (const [locale, localeTokens] of byLocale) {
+        const message = {
+          ...nudgeCopy(kind, locale, { days: user.streakDays }),
+          data: { kind },
+        };
+
+        // One player's delivery must not end the sweep. This runs per user, so
+        // an exception escaping here would abandon everyone after them and fail
+        // the job — and a failed job is retried whole, re-notifying every player
+        // it had already reached. A push nobody receives is a missed nudge; a
+        // push sent twice is the thing people uninstall over.
+        let result: PushSendResult;
+        try {
+          result = await this.sender.send(localeTokens, message);
+        } catch (error) {
+          failed += localeTokens.length;
+          this.logger.warn(
+            `Could not nudge user ${userId} in ${locale}: ` +
+              (error instanceof Error ? error.message : String(error)),
+          );
+          continue;
+        }
+
+        sent += result.sent;
+        failed += result.failed;
+
+        for (const invalid of result.invalidTokens) {
+          await this.deactivate(invalid);
+        }
       }
     }
 
-    this.logger.log(`Daily nudge: ${sent} notification(s)`);
+    this.logger.log(
+      `Daily nudge: ${sent} notification(s)` +
+        (failed > 0 ? `, ${failed} undelivered` : ''),
+    );
     return sent;
   }
 

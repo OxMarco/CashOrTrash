@@ -14,11 +14,22 @@ export const SKIP_SERIALIZATION = 'skipSerialization';
 /**
  * Opt out of `excludeExtraneousValues` for one handler.
  *
- * Use this *only* for responses whose shape the framework owns and which carry
- * no domain data — the Terminus health payload is the sole case today. Never
- * put it on an endpoint that touches an entity: the whole point of the global
- * serializer is that a field reaches the client only if a DTO exposed it, and
- * that guarantee is what keeps `truePriceCents` off the wire.
+ * Two cases, and only two.
+ *
+ * The first is a response whose shape the framework owns and which carries no
+ * domain data — the Terminus health payload.
+ *
+ * The second is `AdminController`, which is the deliberate inversion of what
+ * the serializer is for. The global rule keeps a field off the wire unless a
+ * DTO exposed it, and what that protects is the *player* API: it is why
+ * `truePriceCents` cannot leak into a round. The catalogue editor exists to
+ * show exactly those fields to exactly one operator, behind a separate
+ * credential and outside the OpenAPI document the app's client is generated
+ * from. Writing DTOs there would mean re-exposing every operator-only column
+ * one by one and calling the result protection.
+ *
+ * Anything else that touches an entity must go through `toDto`. A player-facing
+ * endpoint carrying this decorator is a bug, not a shortcut.
  */
 export const RawResponse = () => SetMetadata(SKIP_SERIALIZATION, true);
 

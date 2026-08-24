@@ -10,8 +10,8 @@ import { PlaceholderSeeder } from './placeholder';
  *
  * Photographs arrive off disk now — the catalogue is imported from `items/` at
  * deploy time — so this no longer fetches anything over HTTP. What is left is
- * the pair that matters: `ImageProcessor` washes and crops the bytes, and
- * `MediaStore` holds them under their own digest.
+ * the pair that matters: `ImageProcessor` checks the shape and re-encodes the
+ * bytes, and `MediaStore` holds them under their own digest.
  *
  * Swapping `LocalMediaStore` for an object-store implementation is the single
  * binding below and nothing else, exactly as `PushSender` is bound in

@@ -10,8 +10,8 @@ import { Queue } from 'bullmq';
 import { withTimeout } from 'src/common/utils/with-timeout';
 import { MAINTENANCE_QUEUE } from 'src/modules/jobs/jobs.constants';
 
-/** How many failed maintenance jobs we tolerate before reporting unready. */
-const FAILED_THRESHOLD = 25;
+/** A scheduled maintenance job exhausting its retries needs operator attention. */
+const FAILED_THRESHOLD = 1;
 
 @Injectable()
 export class QueueHealthIndicator extends HealthIndicator {

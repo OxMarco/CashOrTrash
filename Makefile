@@ -1,5 +1,5 @@
-COMPOSE := docker compose -f docker-compose.prod.yaml
-COMPOSE_DEV := docker compose -f docker-compose.local.yaml
+COMPOSE := docker compose -f docker-compose.prod.yml
+COMPOSE_DEV := docker compose -f docker-compose.local.yml
 
 .PHONY: help dev dev-deps dev-down dev-logs up down restart deploy build smoke pull logs ps psql redis-cli sh status health prune db-backup db-restore
 
@@ -33,10 +33,9 @@ pull: ## Pull updated images for the pinned tags
 build: ## Rebuild the app image
 	$(COMPOSE) build app
 
-# Back up before recreating. There is no migration step — the app applies the
-# entities to the schema itself on boot — so the new container reshapes the
-# live database as it starts, and the dump taken here is the only way back from
-# a change that turns out to have dropped something.
+# Back up before recreating. The app reconciles the schema from its entities on
+# boot, which can drop what it does not recognise, so the dump taken here is the
+# rollback point if a release has to be reversed.
 deploy: ## Pull, rebuild, back up, recreate changed services, smoke
 	git pull --ff-only
 	$(MAKE) build
@@ -44,7 +43,7 @@ deploy: ## Pull, rebuild, back up, recreate changed services, smoke
 	$(COMPOSE) up -d --remove-orphans
 	$(MAKE) smoke
 
-smoke: ## Check the public readiness endpoint (database, Redis and queue)
+smoke: ## Check public readiness (database, Redis, queue, and catalogue)
 	@set -a; . ./.env; set +a; \
 	for attempt in $$(seq 1 40); do \
 		if curl --connect-timeout 3 --max-time 10 -fsS "https://$$DOMAIN/health/ready" >/dev/null 2>&1; then \

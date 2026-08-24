@@ -19,7 +19,7 @@ import { User } from '../../users/entities/user.entity';
 @Index('ix_daily_score_date_score', ['challengeDate', 'score'])
 @Check(
   'ck_daily_score_values',
-  '"score" >= 0 AND ("rank" IS NULL OR "rank" > 0) AND ("prevRank" IS NULL OR "prevRank" > 0)',
+  '"score" >= 0 AND ("rank" IS NULL OR "rank" > 0)',
 )
 export class DailyScore {
   @PrimaryColumn({ type: 'int' })
@@ -41,10 +41,6 @@ export class DailyScore {
   /** Final standing written by the nightly snapshot. */
   @Column({ type: 'int', nullable: true })
   rank: number | null;
-
-  /** Retained for schema compatibility; no longer written or used for movement. */
-  @Column({ type: 'int', nullable: true })
-  prevRank: number | null;
 
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;

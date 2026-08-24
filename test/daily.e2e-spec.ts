@@ -84,7 +84,13 @@ describe('daily challenge', () => {
     const date = '2026-03-14';
 
     const generated = await daily.generate(date);
-    expect(generated.seed).toBe(`cashortrash:daily:${date}`);
+    // A keyed digest, not the date. It used to be `cashortrash:daily:<date>`,
+    // which made every future challenge computable from a calendar by anyone
+    // who could guess the item ids — see `seedForDate`. Auditable and
+    // unpredictable are not in tension: the seed is recorded, it just cannot be
+    // derived without the server's secret.
+    expect(generated.seed).toMatch(/^[0-9a-f]{64}$/);
+    expect(generated.seed).not.toContain(date);
 
     await ctx.dataSource
       .getRepository(DailyChallenge)

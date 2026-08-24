@@ -47,6 +47,28 @@ export class User {
   @Column({ type: 'int', default: 0 })
   bestRoundScore: number;
 
+  /**
+   * The address this account was registered from, written once and never
+   * updated.
+   *
+   * There is no password and no attestation — a device id is whatever the
+   * client says it is — so nothing stops someone minting accounts but the
+   * per-address budget in `AuthService`, and a budget with no record behind it
+   * cannot be checked after the fact. This is what makes "these three hundred
+   * accounts all came from one address" a query rather than a suspicion.
+   *
+   * Nullable because a request can arrive without a resolvable address, because
+   * rows written before this column existed have none — and because the
+   * `registration-ip-prune` job nulls it once the account is past
+   * `REGISTRATION_IP_RETENTION_DAYS`. It is the only piece of personal data the
+   * application stores, in a codebase that redacts device ids from its logs, so
+   * it is kept for as long as the question it answers is still being asked and
+   * no longer.
+   */
+  @Index('ix_user_registration_ip', { where: '"registrationIp" IS NOT NULL' })
+  @Column({ type: 'varchar', length: 45, nullable: true })
+  registrationIp: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 }

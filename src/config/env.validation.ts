@@ -14,61 +14,74 @@ export const envValidationSchema = Joi.object({
     .valid('fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent')
     .default('info'),
 
-  DATABASE_HOST: Joi.string().required(),
+  DATABASE_HOST: Joi.string().default('localhost'),
   DATABASE_PORT: Joi.number().port().default(5432),
-  DATABASE_USER: Joi.string().required(),
-  DATABASE_PASSWORD: Joi.string().allow('').required(),
-  DATABASE_NAME: Joi.string().required(),
+  DATABASE_USER: Joi.string().default('cashortrash'),
+  DATABASE_PASSWORD: Joi.string().allow('').default('cashortrash'),
+  DATABASE_NAME: Joi.string().default('cashortrash'),
   DATABASE_SSL: Joi.boolean().default(false),
-  // Opt *out* of entity-driven schema sync, in any environment. On by default
-  // and honoured everywhere, because this project has no migrations: the
-  // entities are the schema and the boot is what applies them. Turning it off
-  // leaves a schema nothing then updates — and see `databaseConfig.synchronize`
-  // for what leaving it on does to anything the entities do not describe.
+  // Entity-driven sync in every environment, because there is no longer a
+  // migration chain to be the alternative. This used to be forced off in
+  // production and paired with `migrationsRun`; with the chain gone that pairing
+  // would boot production against an empty schema, which is a worse failure
+  // than the one the clamp existed to prevent. See `databaseConfig.synchronize`
+  // for what this costs and what to restore before the first real deploy.
   DATABASE_SYNCHRONIZE: Joi.boolean().default(true),
 
-  REDIS_HOST: Joi.string().required(),
+  REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().port().default(6379),
   REDIS_PASSWORD: Joi.string().allow('').default(''),
   REDIS_DB: Joi.number().min(0).default(0),
 
-  JWT_ACCESS_SECRET: Joi.string().min(16).required(),
+  JWT_ACCESS_SECRET: Joi.string().min(32).required(),
   // `<digits><s|m|h|d>` — the shape AuthService casts into jsonwebtoken's
   // expiresIn union and that ttlToSeconds parses.
   JWT_ACCESS_TTL: Joi.string()
     .pattern(/^\d+[smhd]$/)
     .default('15m'),
-  JWT_REFRESH_SECRET: Joi.string()
-    .min(16)
-    .required()
-    .invalid(Joi.ref('JWT_ACCESS_SECRET'))
-    .messages({
-      'any.invalid': 'JWT_REFRESH_SECRET must differ from JWT_ACCESS_SECRET',
-    }),
-  JWT_REFRESH_TTL: Joi.string()
-    .pattern(/^\d+[smhd]$/)
-    .default('60d'),
-
-  // Where the catalogue lives on disk. Empty is allowed and is the normal
-  // case: the tree ships inside the image and is resolved relative to the
-  // compiled output, so an operator should not have to know this exists.
-  ITEMS_ROOT: Joi.string().allow('').default(''),
-  // Whether a deploy imports the tree it shipped with.
-  IMPORT_ON_BOOT: Joi.boolean().default(true),
-  // Required as soon as the import can run, because the import is what writes
-  // every title and description in the catalogue. Unset with the job enabled
-  // would import a catalogue of raw filenames and only look wrong afterwards,
-  // so it fails boot validation instead.
-  // Empty is permitted only with the import switched off, where it means "no
-  // copywriter" — the state the e2e suite runs in so no spec can reach OpenAI.
-  // With the import on, `required()` refuses an empty string as well as a
-  // missing one, which is the point: both would import raw filenames.
-  OPENAI_API_KEY: Joi.string().when('IMPORT_ON_BOOT', {
-    is: true,
+  // Required in production, because the model is what writes every title and
+  // description a player reads. Without it the portal still accepts uploads and
+  // the catalogue still plays — items simply keep the text that was typed into
+  // the form — but shipping that to a store is not the intent, so it fails boot
+  // validation rather than degrading quietly.
+  //
+  // Empty is permitted everywhere else, which is the state the e2e suite runs
+  // in so that no spec can reach OpenAI.
+  OPENAI_API_KEY: Joi.string().when('NODE_ENV', {
+    is: 'production',
     then: Joi.required(),
     otherwise: Joi.string().allow('').optional(),
   }),
   OPENAI_MODEL: Joi.string().default('gpt-5.4'),
+
+  // --- admin portal ---------------------------------------------------------
+  // An scrypt hash as `<salt-hex>:<key-hex>`; `npm run admin:hash` prints one.
+  // Required in production because the catalogue cannot be filled without the
+  // portal, and a deployment with no way to add items is a broken one.
+  //
+  // The pattern is checked rather than merely the presence of a string: the
+  // likeliest mistake is pasting the password itself here, which would store a
+  // plaintext credential and reject every login — a failure that looks like a
+  // forgotten password rather than a misconfiguration.
+  ADMIN_PASSWORD_HASH: Joi.string()
+    .pattern(/^[0-9a-f]{32}:[0-9a-f]{128}$/)
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.required(),
+      otherwise: Joi.string().allow('').optional(),
+    }),
+  // Independent of JWT_ACCESS_SECRET on purpose — see AdminJwtStrategy. Long
+  // enough that it cannot be a memorable phrase someone reused.
+  ADMIN_JWT_SECRET: Joi.string()
+    .min(32)
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.required(),
+      otherwise: Joi.string().allow('').optional(),
+    }),
+  ADMIN_SESSION_TTL: Joi.string()
+    .pattern(/^\d+[smhd]$/)
+    .default('2h'),
 
   ROUNDS_PER_SESSION: Joi.number().min(1).max(20).default(5),
 
@@ -76,12 +89,62 @@ export const envValidationSchema = Joi.object({
   // product decision, not a safety one.
   ROUND_SECONDS: Joi.number().min(0).max(300).default(10),
   ROUND_GRACE_MS: Joi.number().min(0).max(10_000).default(1_500),
+  SLIDER_SEED_SECRET: Joi.string()
+    .min(32)
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.required(),
+      otherwise: Joi.string().default(
+        'development-slider-seed-secret-change-me',
+      ),
+    }),
+  // Keys the daily draw. Same contract as SLIDER_SEED_SECRET above, and for the
+  // same reason — see `seedForDate`. A production boot without it fails rather
+  // than quietly dealing a challenge anyone can compute a week ahead.
+  DAILY_SEED_SECRET: Joi.string()
+    .min(32)
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.required(),
+      otherwise: Joi.string().default(
+        'development-daily-seed-secret-change-me',
+      ),
+    }),
+  // Also the depth of the reserve held out of quick and h2h draws, so it cannot
+  // sensibly run to the length of the catalogue.
+  DAILY_PREGENERATE_DAYS: Joi.number().integer().min(1).max(30).default(1),
+  ITEM_COOLDOWN_DAYS: Joi.number().integer().min(0).max(365).default(30),
+  // A year is the ceiling because a bound that long is not a bound; 0 is the
+  // explicit "never expires", which should be chosen rather than defaulted to.
+  MATCH_INVITE_TTL_DAYS: Joi.number().integer().min(0).max(365).default(7),
+  QUICK_SESSIONS_PER_HOUR: Joi.number().integer().min(0).default(30),
+  ACCOUNTS_PER_IP_PER_DAY: Joi.number().integer().min(0).default(50),
+  // Capped at a year: `registrationIp` is retained network metadata, and a
+  // retention window longer than that is not a window.
+  REGISTRATION_IP_RETENTION_DAYS: Joi.number()
+    .integer()
+    .min(0)
+    .max(365)
+    .default(30),
+  LEADERBOARD_MIN_ACCOUNT_AGE_HOURS: Joi.number()
+    .integer()
+    .min(0)
+    .max(720)
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.number().default(24),
+      otherwise: Joi.number().default(0),
+    }),
   // A dwell floor at or above the deadline would make every bet unplaceable:
   // too early to be accepted, too late to be scored. Refuse the combination at
   // boot rather than at the first bet of the day.
+  //
+  // On by default at one second. No honest player reads an object, forms a
+  // price and drags two thumbs inside that — the floor costs a human nothing
+  // and costs a script the only thing it has, which is speed. Set 0 to disable.
   MIN_ROUND_SECONDS: Joi.number()
     .min(0)
-    .default(0)
+    .default(1)
     .when('ROUND_SECONDS', {
       is: Joi.number().greater(0),
       then: Joi.number().less(Joi.ref('ROUND_SECONDS')),
@@ -90,8 +153,44 @@ export const envValidationSchema = Joi.object({
   THROTTLE_TTL_MS: Joi.number().min(1000).default(60_000),
   THROTTLE_LIMIT: Joi.number().min(1).default(120),
 
+  PUSH_PROVIDER: Joi.when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().valid('expo').default('expo'),
+    otherwise: Joi.string().valid('expo', 'logging').default('logging'),
+  }),
+  PUSH_TIMEOUT_MS: Joi.number().min(1_000).max(60_000).default(10_000),
+
   DEEP_LINK_BASE: Joi.string().default('cashortrash://match'),
+  // https only, and empty is allowed: a shared result drops its link rather
+  // than carrying one a reader cannot open. An http origin would be worse than
+  // no link at all, so the scheme is pinned rather than merely suggested.
+  PUBLIC_ORIGIN: Joi.string()
+    .uri({ scheme: ['https'] })
+    .allow('')
+    .default(''),
   SWAGGER_ENABLED: Joi.boolean().default(true),
+  SUPPORT_EMAIL: Joi.string()
+    .email()
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.required(),
+      otherwise: Joi.string().default('support@example.com'),
+    }),
+  // Universal/App Link association. Optional until the app is published:
+  // while either is empty the matching `.well-known` file answers 404 and a
+  // shared /match link opens in the browser instead of the app. Validated
+  // when set so a typo cannot ship as a silently-broken association file.
+  APPLE_APP_ID: Joi.string()
+    .pattern(/^[A-Z0-9]{10}\.[A-Za-z0-9.-]+$/)
+    .allow('')
+    .default(''),
+  ANDROID_APP_PACKAGE: Joi.string()
+    .pattern(/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/)
+    .default('fun.cashortrash.app'),
+  ANDROID_SHA256_CERT_FINGERPRINT: Joi.string()
+    .pattern(/^(?:[A-F0-9]{2}:){31}[A-F0-9]{2}$/)
+    .allow('')
+    .default(''),
 
   // Browser origins for the app's web target, comma-separated. Only consulted
   // in production — development allows any origin, and native apps never
@@ -117,12 +216,4 @@ export const envValidationSchema = Joi.object({
   // the window in which a round is dealt on one rate and bet on another.
   CURRENCY_REFRESH_SECONDS: Joi.number().min(60).default(3_600),
   CURRENCY_TIMEOUT_MS: Joi.number().min(500).default(5_000),
-
-  // The floor under a live rate, used only before the first fetch lands or
-  // when the provider is unreachable with nothing cached. Bounded rather than
-  // merely positive: a rate near zero collapses every slider to a single stop
-  // and a huge one overflows the integer minor units the wire carries, and
-  // both would surface as an unplayable round rather than as a bad config.
-  CURRENCY_FALLBACK_RATE_EUR: Joi.number().min(0.01).max(1000).default(0.92),
-  CURRENCY_FALLBACK_RATE_GBP: Joi.number().min(0.01).max(1000).default(0.79),
 });

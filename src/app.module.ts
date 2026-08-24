@@ -4,7 +4,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import KeyvRedis from '@keyv/redis';
@@ -12,6 +12,7 @@ import Redis from 'ioredis';
 import { LoggerModule } from 'nestjs-pino';
 
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { UserThrottlerGuard } from './common/guards/user-throttler.guard';
 import {
   AppConfig,
   configurations,
@@ -29,6 +30,8 @@ import { DailyModule } from './modules/daily/daily.module';
 import { FriendsModule } from './modules/friends/friends.module';
 import { HomeModule } from './modules/home/home.module';
 import { JobsModule } from './modules/jobs/jobs.module';
+import { AdminModule } from './modules/admin/admin.module';
+import { LandingModule } from './modules/landing/landing.module';
 import { LeaderboardModule } from './modules/leaderboard/leaderboard.module';
 import { ManifestModule } from './modules/manifest/manifest.module';
 import { MatchesModule } from './modules/matches/matches.module';
@@ -64,8 +67,12 @@ import { buildBullRedisOptions, RedisModule } from './redis/redis.module';
             redact: [
               'req.headers.authorization',
               'req.headers.cookie',
+              'req.headers.x-forwarded-for',
+              'req.headers.x-real-ip',
               'req.body.deviceId',
-              'req.body.refreshToken',
+              'req.remoteAddress',
+              'req.remotePort',
+              'res.headers.set-cookie',
             ],
             autoLogging: {
               ignore: (req) => req.url?.startsWith('/health') ?? false,
@@ -90,9 +97,8 @@ import { buildBullRedisOptions, RedisModule } from './redis/redis.module';
           database: db.database,
           ssl: db.ssl ? { rejectUnauthorized: false } : false,
           autoLoadEntities: true,
-          // The schema is the entities, everywhere — this project has no
-          // migrations. See `databaseConfig.synchronize` for what that means
-          // for anything in the database no entity describes.
+          // The only way the schema is built. See `DatabaseConfig.synchronize`
+          // for why there is no migration chain behind it.
           synchronize: db.synchronize,
         };
       },
@@ -145,6 +151,8 @@ import { buildBullRedisOptions, RedisModule } from './redis/redis.module';
     MatchesModule,
     NotificationsModule,
     HomeModule,
+    LandingModule,
+    AdminModule,
     JobsModule,
     ManifestModule,
     HealthModule,
@@ -152,7 +160,10 @@ import { buildBullRedisOptions, RedisModule } from './redis/redis.module';
   providers: [
     // Authentication is the default; `@Public()` is the deliberate exception.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Order matters, and not only for readability: the throttler keys on the
+    // authenticated account, which only exists once the guard above has run.
+    // Reversing these two silently reverts every limit to per-IP.
+    { provide: APP_GUARD, useClass: UserThrottlerGuard },
     SchemaExtras,
   ],
 })

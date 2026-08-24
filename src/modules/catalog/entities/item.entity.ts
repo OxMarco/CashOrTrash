@@ -22,12 +22,13 @@ export enum ItemOrigin {
    * from a live type.
    */
   CRAWLER = 'crawler',
-  /**
-   * Historical. Entered in the admin panel, which no longer exists. Kept for
-   * the same reason as CRAWLER.
-   */
+  /** Entered in the admin portal. The only writer today. */
   MANUAL = 'manual',
-  /** Imported from the `items/` tree on boot. The only writer today. */
+  /**
+   * Historical. Imported from an `items/` tree on boot, back when shipping the
+   * catalogue meant shipping files. Kept for the same reason as CRAWLER: rows
+   * predating the portal still read back.
+   */
   IMPORT = 'import',
 }
 
@@ -36,7 +37,8 @@ export enum ItemOrigin {
 // Two items with the same title in the same category are a duplicate, not a
 // pair. Titles are written by a model now, so this is also the backstop that
 // catches two different objects being described identically — see
-// `CatalogImportService`, which retries the copy rather than dropping the item.
+// `ItemCopyService`, which qualifies a clashing title rather than dropping the
+// item.
 @Index('uq_item_theme_title', ['themeId', 'title'], { unique: true })
 // The photograph is the item's identity, so importing the same file twice is an
 // update and never a second row. Keyed on the *source* bytes rather than the
@@ -97,7 +99,11 @@ export class Item {
   @Column({ type: 'int' })
   themeId: number;
 
-  /** Provenance for the price. Never leaves the server in v1. */
+  /**
+   * Where the price was found, if whoever added the item recorded it. Optional
+   * and free-form — it is a note to the operator, not a gate — and it never
+   * leaves the server.
+   */
   @Exclude()
   @Column({ type: 'varchar', length: 512, nullable: true })
   sourceUrl: string | null;
@@ -111,6 +117,23 @@ export class Item {
 
   @Column({ type: 'boolean', default: true })
   active: boolean;
+
+  /**
+   * Whether the model still owes this item its prose.
+   *
+   * An upload returns as soon as the photograph is stored, so `title` and
+   * `conditionLine` start out holding the text typed into the portal and the
+   * copy job replaces them. Flagged rather than inferred: once the model has
+   * run there is nothing about the stored English that distinguishes prose it
+   * wrote from prose that happened to read well, so a job that had to guess
+   * would either re-bill every item on every run or never retry a failure.
+   *
+   * Items are dealt while it is true. Typed-in text is a worse description than
+   * a written one, but it is a correct one — holding the item back would make a
+   * category unplayable for as long as OpenAI was down.
+   */
+  @Column({ type: 'boolean', default: false })
+  copyPending: boolean;
 
   @ManyToOne(() => Theme, { onDelete: 'RESTRICT' })
   @JoinColumn({

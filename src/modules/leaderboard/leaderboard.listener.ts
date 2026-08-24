@@ -23,7 +23,13 @@ export class LeaderboardListener {
    */
   @OnEvent(SESSION_COMPLETED, { async: true })
   async onSessionCompleted(event: SessionCompletedEvent): Promise<void> {
-    if (event.mode !== GameMode.DAILY || !event.dailyDate) return;
+    if (
+      event.mode !== GameMode.DAILY ||
+      !event.dailyDate ||
+      !event.leaderboardEligible
+    ) {
+      return;
+    }
 
     try {
       await this.leaderboard.recordDailyScore(

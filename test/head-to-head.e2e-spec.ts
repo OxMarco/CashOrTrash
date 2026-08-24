@@ -4,6 +4,7 @@ import {
   MATCH_EVENTS,
   MatchesGateway,
 } from '../src/modules/matches/matches.gateway';
+import { MatchesService } from '../src/modules/matches/matches.service';
 import { playRound, registerPlayer } from './support/players';
 import { createTestApp, resetGameplayState, TestApp } from './support/test-app';
 
@@ -578,6 +579,169 @@ describe('head-to-head across replicas', () => {
       expect(guestPlay.reveal.match.opponentRoundPoints).toEqual(
         expect.any(Number),
       );
+    });
+  });
+
+  /**
+   * An invite is a live entry point into a scored match, and it used to have
+   * no bound at all: a friend who never opened the link left the code working
+   * forever. The host cannot revoke one they no longer hold either — the app
+   * keeps a single match in device storage and a second invite overwrites it —
+   * so the bound has to be the server's.
+   */
+  describe('an invite that goes unanswered', () => {
+    /** Backdates the row, which is the only way to reach a TTL from a test. */
+    const age = async (matchId: string, days: number) =>
+      replicaA.dataSource.query(
+        `UPDATE match SET "createdAt" = now() - ($2 || ' days')::interval WHERE id = $1`,
+        [matchId, String(days)],
+      );
+
+    const openMatch = async (device: string, username?: string) => {
+      const host = await registerPlayer(replicaA.api, device, username);
+      const match = await host.api.post('/v1/matches', {
+        themeSlug: 'vintage-finds',
+      });
+      expect(match.status).toBe(201);
+      return { host, match: match.body };
+    };
+
+    it('refuses a guest arriving after the window has closed', async () => {
+      const { match } = await openMatch('h2h-stale-0001', 'staleh');
+      await age(match.id, 30);
+
+      const guest = await registerPlayer(replicaB.api, 'h2h-stale-0002');
+      const response = await guest.api.post('/v1/matches/join', {
+        inviteCode: match.inviteCode,
+      });
+
+      // Gone, not "unknown code": the code was real and the client should say
+      // the challenge expired rather than send the player back to retype it.
+      expect(response.status).toBe(410);
+    });
+
+    it('still lets a guest in on the last day of the window', async () => {
+      const { match } = await openMatch('h2h-stale-0003', 'freshh');
+      await age(match.id, 6);
+
+      const guest = await registerPlayer(replicaB.api, 'h2h-stale-0004');
+      const response = await guest.api.post('/v1/matches/join', {
+        inviteCode: match.inviteCode,
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body.status).toBe('active');
+    });
+
+    it('sweeps aged invites and leaves live matches alone', async () => {
+      const stale = await openMatch('h2h-stale-0005', 'sweep1');
+      const fresh = await openMatch('h2h-stale-0006', 'sweep2');
+      const joined = await openMatch('h2h-stale-0007', 'sweep3');
+
+      const guest = await registerPlayer(replicaB.api, 'h2h-stale-0008');
+      await guest.api.post('/v1/matches/join', {
+        inviteCode: joined.match.inviteCode,
+      });
+
+      await age(stale.match.id, 30);
+      // Older than the TTL *and* joined — the age must not be what decides it.
+      await age(joined.match.id, 30);
+
+      const matches = replicaA.app.get(MatchesService);
+      await matches.expireStaleInvites();
+
+      const statusOf = async (id: string) => {
+        const [row] = await replicaA.dataSource.query(
+          'SELECT status FROM match WHERE id = $1',
+          [id],
+        );
+        return row.status;
+      };
+
+      expect(await statusOf(stale.match.id)).toBe('expired');
+      expect(await statusOf(fresh.match.id)).toBe('pending');
+      expect(await statusOf(joined.match.id)).toBe('active');
+    });
+
+    it('lets the host withdraw a challenge nobody has taken', async () => {
+      const { host, match } = await openMatch('h2h-cancel-0001', 'withdr');
+
+      const cancelled = await host.api.del(`/v1/matches/${match.id}`);
+      expect(cancelled.status).toBe(200);
+      expect(cancelled.body.status).toBe('expired');
+
+      const guest = await registerPlayer(replicaB.api, 'h2h-cancel-0002');
+      const join = await guest.api.post('/v1/matches/join', {
+        inviteCode: match.inviteCode,
+      });
+      expect(join.status).toBe(410);
+    });
+
+    it('withdrawing twice is not an error', async () => {
+      const { host, match } = await openMatch('h2h-cancel-0003', 'twicee');
+
+      await host.api.del(`/v1/matches/${match.id}`);
+      const again = await host.api.del(`/v1/matches/${match.id}`);
+
+      expect(again.status).toBe(200);
+      expect(again.body.status).toBe('expired');
+    });
+
+    it("is the host's to withdraw and nobody else's", async () => {
+      const { match } = await openMatch('h2h-cancel-0004', 'ownerr');
+      const other = await registerPlayer(replicaB.api, 'h2h-cancel-0005');
+
+      expect((await other.api.del(`/v1/matches/${match.id}`)).status).toBe(403);
+    });
+
+    it('refuses to withdraw once someone has joined', async () => {
+      const { host, match } = await openMatch('h2h-cancel-0006', 'joined');
+      const guest = await registerPlayer(replicaB.api, 'h2h-cancel-0007');
+      await guest.api.post('/v1/matches/join', {
+        inviteCode: match.inviteCode,
+      });
+
+      // The guest has usually played it by now. Ending it from one side would
+      // discard their rounds with nothing recorded, which is a forfeit rather
+      // than a cancellation.
+      expect((await host.api.del(`/v1/matches/${match.id}`)).status).toBe(409);
+    });
+
+    /**
+     * The humane half of the rule. A host who played their five rounds and is
+     * waiting on a friend keeps the game they played; what expiry takes away
+     * is the ability to start a *new* one on a dead invite.
+     */
+    it('lets the host finish a game they had already started', async () => {
+      const { host, match } = await openMatch('h2h-stale-0009', 'midway');
+
+      const session = await host.api.post('/v1/sessions', {
+        mode: 'h2h',
+        inviteCode: match.inviteCode,
+      });
+      expect(session.status).toBe(201);
+
+      await age(match.id, 30);
+
+      const resumed = await host.api.post('/v1/sessions', {
+        mode: 'h2h',
+        inviteCode: match.inviteCode,
+      });
+      expect(resumed.status).toBe(201);
+      expect(resumed.body.id).toBe(session.body.id);
+      expect(resumed.body.resumed).toBe(true);
+    });
+
+    it('refuses a fresh game on an invite that has aged out', async () => {
+      const { host, match } = await openMatch('h2h-stale-0010', 'toolat');
+      await age(match.id, 30);
+
+      const session = await host.api.post('/v1/sessions', {
+        mode: 'h2h',
+        inviteCode: match.inviteCode,
+      });
+
+      expect(session.status).toBe(410);
     });
   });
 });

@@ -13,13 +13,22 @@
  * live cards at a glyph the installed builds do not have.
  */
 export const THEME_ICONS = [
+  'apple',
   'basket',
+  'bottle-wine',
+  'calendar',
   'camera',
+  'car',
   'gem',
   'house',
-  'shuffle',
-  'calendar',
   'pencil',
+  'plane',
+  'plug-zap',
+  'shuffle',
+  'ship',
+  'toy-brick',
+  'wallet-cards',
+  'watch',
 ] as const;
 
 export type ThemeIconName = (typeof THEME_ICONS)[number];

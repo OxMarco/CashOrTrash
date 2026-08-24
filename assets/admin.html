@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>CashOrTrash catalogue</title>
+    <link rel="stylesheet" href="/admin/admin.css" />
+  </head>
+  <body>
+    <main>
+      <h1>CashOrTrash catalogue</h1>
+      <p class="sub">Categories and items. Descriptions are written by the model after upload.</p>
+
+      <section id="login">
+        <fieldset>
+          <legend>Sign in</legend>
+          <label for="password">Portal password</label>
+          <input id="password" type="password" autocomplete="current-password" />
+          <div class="actions"><button id="signin">Sign in</button></div>
+        </fieldset>
+      </section>
+
+      <section id="app" class="hidden">
+        <div id="notice"></div>
+
+        <h2>Categories</h2>
+        <table>
+          <thead><tr><th>Name</th><th>Slug</th><th>Items</th><th>Copy</th><th></th></tr></thead>
+          <tbody id="categories"></tbody>
+        </table>
+
+        <fieldset>
+          <legend>New category</legend>
+          <div class="row">
+            <div><label for="cat-name">Name</label><input id="cat-name" placeholder="Watches" /></div>
+            <div><label for="cat-icon">Icon</label><select id="cat-icon"></select></div>
+            <div><label for="cat-order">Sort order</label><input id="cat-order" type="number" value="0" /></div>
+          </div>
+          <div class="actions"><button id="cat-create">Create category</button></div>
+        </fieldset>
+
+        <h2>Add items</h2>
+        <fieldset>
+          <legend>Upload</legend>
+          <label for="item-theme">Category</label>
+          <select id="item-theme"></select>
+          <div class="drop" id="drop">
+            Drop photographs here, or click to choose.<br />
+            Naming a file <code>cartier baignoire_7000.webp</code> fills in the name and price.
+          </div>
+          <input id="file" type="file" accept="image/*" multiple class="hidden" />
+          <div id="queue"></div>
+        </fieldset>
+
+        <h2>Items</h2>
+        <table>
+          <thead><tr><th></th><th>Name</th><th>Condition</th><th>Price</th><th>State</th><th></th></tr></thead>
+          <tbody id="items"></tbody>
+        </table>
+        <div class="actions"><button class="ghost" id="signout">Sign out</button></div>
+      </section>
+    </main>
+    <script src="/admin/admin.js"></script>
+  </body>
+</html>

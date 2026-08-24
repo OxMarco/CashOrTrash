@@ -103,4 +103,12 @@ export class LeaderboardResponseDto {
   @ApiProperty()
   @Expose()
   totalPlayers: number;
+
+  @ApiProperty({
+    description:
+      'How many players share the top score — 1 when first place is ' +
+      'undisputed, 0 on an empty board. Lets a client caption a tied podium.',
+  })
+  @Expose()
+  tiedAtTop: number;
 }

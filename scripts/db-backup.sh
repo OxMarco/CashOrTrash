@@ -1,5 +1,5 @@
 #!/bin/sh
-# pg_dump sidecar loop (see the db-backup service in docker-compose.prod.yaml).
+# pg_dump sidecar loop (see the db-backup service in docker-compose.prod.yml).
 # One custom-format dump per UTC day into $BACKUP_DIR, rotated after
 # $BACKUP_KEEP_DAYS days. Connection comes from the standard PG* env vars.
 #

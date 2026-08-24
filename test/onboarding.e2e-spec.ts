@@ -51,46 +51,6 @@ describe('onboarding', () => {
       expect(response.status).toBe(400);
     });
 
-    it('issues a fresh pair for a refresh token', async () => {
-      const auth = await api.post('/v1/auth/anonymous', {
-        deviceId: 'onboard-device-0002',
-      });
-
-      const refreshed = await api.post('/v1/auth/refresh', {
-        refreshToken: auth.body.refreshToken,
-      });
-
-      expect(refreshed.status).toBe(200);
-      expect(refreshed.body.accessToken).toEqual(expect.any(String));
-      expect(refreshed.body.isNewPlayer).toBe(false);
-    });
-
-    /**
-     * The two token kinds are signed with different secrets *and* carry a
-     * `typ` claim. Either alone would stop this; both is deliberate.
-     */
-    it('refuses to accept an access token as a refresh token', async () => {
-      const auth = await api.post('/v1/auth/anonymous', {
-        deviceId: 'onboard-device-0003',
-      });
-
-      const response = await api.post('/v1/auth/refresh', {
-        refreshToken: auth.body.accessToken,
-      });
-
-      expect(response.status).toBe(401);
-    });
-
-    it('refuses a refresh token as a bearer credential', async () => {
-      const auth = await api.post('/v1/auth/anonymous', {
-        deviceId: 'onboard-device-0004',
-      });
-
-      const response = await api.as(auth.body.refreshToken).get('/v1/me');
-
-      expect(response.status).toBe(401);
-    });
-
     it('requires a token for the authenticated surface', async () => {
       expect((await api.get('/v1/home')).status).toBe(401);
       expect((await api.get('/v1/me')).status).toBe(401);
@@ -247,6 +207,61 @@ describe('onboarding', () => {
 
       expect(response.status).toBe(409);
       expect(response.body.type).toBe('username-taken');
+    });
+  });
+
+  describe('account deletion', () => {
+    it('removes the player, their dependent rows, and cached leaderboard entry', async () => {
+      const player = await registerPlayer(
+        api,
+        'delete-device-0001',
+        'deleteme',
+      );
+      await player.api.post('/v1/me/push', {
+        platform: 'ios',
+        token: 'ExponentPushToken[delete-me-account-test]',
+        timezoneOffsetMinutes: 60,
+      });
+      await ctx.dataSource.query(
+        `INSERT INTO daily_score ("userId", "challengeDate", score)
+         VALUES ($1, CURRENT_DATE, 123)`,
+        [player.userId],
+      );
+      const member = String(player.userId).padStart(10, '0');
+      await ctx.redis.zadd('lb:daily:2099-01-01', 123, member);
+
+      const response = await player.api.del('/v1/me');
+
+      expect(response.status).toBe(204);
+      expect(
+        await ctx.dataSource.query('SELECT id FROM "user" WHERE id = $1', [
+          player.userId,
+        ]),
+      ).toEqual([]);
+      expect(
+        await ctx.dataSource.query(
+          'SELECT id FROM push_token WHERE "userId" = $1',
+          [player.userId],
+        ),
+      ).toEqual([]);
+      expect(
+        await ctx.dataSource.query(
+          'SELECT "userId" FROM daily_score WHERE "userId" = $1',
+          [player.userId],
+        ),
+      ).toEqual([]);
+      expect(await ctx.redis.zscore('lb:daily:2099-01-01', member)).toBeNull();
+
+      // A previously issued access credential no longer resolves.
+      expect((await player.api.get('/v1/me')).status).toBe(401);
+
+      // The local installation may choose to start over with a new anonymous
+      // identity; the deleted handle and device id are no longer retained.
+      const recreated = await api.post('/v1/auth/anonymous', {
+        deviceId: player.deviceId,
+      });
+      expect(recreated.status).toBe(200);
+      expect(recreated.body.isNewPlayer).toBe(true);
     });
   });
 });

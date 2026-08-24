@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 
 /**
- * Deterministic PRNG. The daily challenge is generated from `hash(date)`, so
+ * Deterministic PRNG. The daily challenge is generated from `seedForDate`, so
  * the same date always yields the same five items — the set is reproducible
  * and auditable after the fact, and regenerating it is safe.
  */
@@ -42,11 +42,28 @@ export class SeededRandom {
 }
 
 /**
- * The daily draw is a pure function of this string, so changing the prefix
- * changes which items every future date deals. Already-generated days are
- * unaffected — `daily_challenge` stores its `itemIds`, and `getOrCreate`
- * returns the stored row rather than re-deriving it — so a rename cannot
- * reshuffle a challenge somebody has already played.
+ * What the daily challenge is drawn from.
+ *
+ * Keyed, for the same reason `sliderSeed` is: the only identifier in the
+ * visible scope is a calendar date. An unkeyed hash of one — which is what this
+ * was — makes the draw a pure function of public inputs, and this file's PRNG
+ * and shuffle are published code. Anyone who could reconstruct the active item
+ * ids could compute every *future* daily offline, look the five objects up at
+ * leisure, and post a perfect score to a leaderboard that is supposed to be
+ * measuring whether they know what things cost.
+ *
+ * The date stays inside the HMAC rather than beside it, so no two dates share a
+ * draw and knowing one day's five items says nothing about tomorrow's.
+ *
+ * Already-generated days are unaffected by a key change — `daily_challenge`
+ * stores its `itemIds`, and `getOrCreate` returns the stored row rather than
+ * re-deriving it — so rotating the secret cannot reshuffle a challenge somebody
+ * has already played.
+ *
+ * The digest is 64 hex characters, which is exactly the width of the
+ * `daily_challenge.seed` column it is stored in. Do not decorate it.
  */
-export const seedForDate = (date: string): string =>
-  `cashortrash:daily:${date}`;
+export const seedForDate = (date: string, secret: string): string =>
+  createHmac('sha256', secret)
+    .update(`cashortrash:daily:${date}`)
+    .digest('hex');

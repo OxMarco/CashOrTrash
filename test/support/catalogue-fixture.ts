@@ -22,6 +22,11 @@ import { PLACEHOLDER_PHOTO_URL } from '../../src/modules/media/placeholder';
  * invariants (enough items per theme, a true price comfortably inside its
  * slider), and a generator makes those hold by construction instead of by
  * someone re-checking twenty literals. The prices are invented and mean nothing.
+ *
+ * Five of the themes are real categories, which is the floor `CatalogHealthIndicator`
+ * enforces: `mystery-mix` is excluded there because it owns no items, so a
+ * fixture of four real themes plus mystery leaves `/health/ready` permanently
+ * red and `platform.e2e-spec` unable to assert a green probe.
  */
 
 /** The slugs specs name directly. `mystery-mix` must be the mystery row. */
@@ -81,11 +86,20 @@ const THEMES: FixtureTheme[] = [
     basePriceCents: 35_000_000,
   },
   {
+    slug: 'gadgets',
+    name: 'Gadgets',
+    iconName: 'plug-zap',
+    sortOrder: 4,
+    isMystery: false,
+    bonusPct: 0,
+    basePriceCents: 120_000,
+  },
+  {
     // Draws from every theme, so it needs no items of its own.
     slug: 'mystery-mix',
     name: 'Mystery mix',
     iconName: 'shuffle',
-    sortOrder: 4,
+    sortOrder: 5,
     isMystery: true,
     bonusPct: 0.1,
     basePriceCents: 0,

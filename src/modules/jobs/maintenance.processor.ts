@@ -5,15 +5,13 @@ import { DataSource } from 'typeorm';
 
 import { addDays, todayUtc } from 'src/common/utils/date.util';
 import { CatalogService } from '../catalog/catalog.service';
-import { CatalogImportService } from '../catalog/import/catalog-import.service';
+import { ItemCopyService } from '../catalog/copy/item-copy.service';
 import { DailyService } from '../daily/daily.service';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
+import { MatchesService } from '../matches/matches.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import {
-  CATALOGUE_IMPORT_LOCK,
-  JOBS,
-  MAINTENANCE_QUEUE,
-} from './jobs.constants';
+import { UsersService } from '../users/users.service';
+import { ITEM_COPY_LOCK, JOBS, MAINTENANCE_QUEUE } from './jobs.constants';
 
 @Processor(MAINTENANCE_QUEUE)
 export class MaintenanceProcessor extends WorkerHost {
@@ -23,8 +21,10 @@ export class MaintenanceProcessor extends WorkerHost {
     private readonly daily: DailyService,
     private readonly leaderboard: LeaderboardService,
     private readonly catalog: CatalogService,
-    private readonly catalogImport: CatalogImportService,
+    private readonly itemCopy: ItemCopyService,
     private readonly notifications: NotificationsService,
+    private readonly users: UsersService,
+    private readonly matches: MatchesService,
     private readonly dataSource: DataSource,
   ) {
     super();
@@ -49,8 +49,14 @@ export class MaintenanceProcessor extends WorkerHost {
       case JOBS.LEADERBOARD_REBUILD:
         return this.rebuild(job.data as { date?: string });
 
-      case JOBS.CATALOGUE_IMPORT:
-        return this.importCatalogue();
+      case JOBS.REGISTRATION_IP_PRUNE:
+        return { cleared: await this.users.pruneRegistrationIps() };
+
+      case JOBS.MATCH_INVITE_EXPIRE:
+        return { expired: await this.matches.expireStaleInvites() };
+
+      case JOBS.ITEM_COPY:
+        return this.writeItemCopy();
 
       default:
         this.logger.warn(`Unknown job: ${job.name}`);
@@ -59,41 +65,37 @@ export class MaintenanceProcessor extends WorkerHost {
   }
 
   /**
-   * Reconciles the catalogue to the `items/` tree the image shipped with.
+   * Writes the prose the portal's uploads are still owed.
    *
    * Behind an advisory lock rather than trusting the queue alone. BullMQ hands
-   * one job to one worker, but every replica enqueues on boot and a job that
-   * has already completed and been trimmed can be enqueued again — two replicas
-   * washing the same photographs at once is precisely the concurrent decode the
-   * memory ceiling is set to avoid.
+   * one job to one worker, but the portal enqueues on every upload and a job
+   * that has already completed and been trimmed can be enqueued again — two
+   * replicas running the pass together would send the same items to the model
+   * twice and pay for both.
    *
    * `pg_try_advisory_lock` rather than the blocking form: a second replica
    * should decide there is nothing to do and get on with serving, not hold a
    * connection waiting to redo work that is already being done.
    */
-  private async importCatalogue(): Promise<unknown> {
+  private async writeItemCopy(): Promise<unknown> {
     const runner = this.dataSource.createQueryRunner();
     await runner.connect();
 
     try {
       const [{ locked }] = (await runner.query(
         'SELECT pg_try_advisory_lock($1) AS locked',
-        [CATALOGUE_IMPORT_LOCK],
+        [ITEM_COPY_LOCK],
       )) as [{ locked: boolean }];
 
       if (!locked) {
-        this.logger.log(
-          'Another replica is importing the catalogue — skipping',
-        );
+        this.logger.log('Another replica is writing item copy — skipping');
         return { skipped: 'lock-held' };
       }
 
       try {
-        return await this.catalogImport.run();
+        return await this.itemCopy.run();
       } finally {
-        await runner.query('SELECT pg_advisory_unlock($1)', [
-          CATALOGUE_IMPORT_LOCK,
-        ]);
+        await runner.query('SELECT pg_advisory_unlock($1)', [ITEM_COPY_LOCK]);
       }
     } finally {
       await runner.release();

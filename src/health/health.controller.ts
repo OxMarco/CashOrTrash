@@ -11,6 +11,7 @@ import { Public } from 'src/common/decorators/public.decorator';
 import { RawResponse } from 'src/common/interceptors/dto-serializer.interceptor';
 import { QueueHealthIndicator } from './queue.health';
 import { RedisHealthIndicator } from './redis.health';
+import { CatalogHealthIndicator } from './catalog.health';
 
 /**
  * The only controller carrying `@RawResponse()`: Terminus owns the payload
@@ -26,6 +27,7 @@ export class HealthController {
     private readonly db: TypeOrmHealthIndicator,
     private readonly redis: RedisHealthIndicator,
     private readonly queue: QueueHealthIndicator,
+    private readonly catalog: CatalogHealthIndicator,
   ) {}
 
   /**
@@ -44,12 +46,15 @@ export class HealthController {
   @Public()
   @Get('ready')
   @HealthCheck()
-  @ApiOperation({ summary: 'Readiness probe — database, Redis and queue.' })
+  @ApiOperation({
+    summary: 'Readiness probe — database, Redis, queue and playable catalogue.',
+  })
   ready(): Promise<HealthCheckResult> {
     return this.health.check([
       () => this.db.pingCheck('database', { timeout: 2000 }),
       () => this.redis.isHealthy('redis'),
       () => this.queue.isHealthy('queue'),
+      () => this.catalog.isHealthy('catalogue'),
     ]);
   }
 }

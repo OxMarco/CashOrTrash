@@ -2,6 +2,9 @@ import { ValidationPipe } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
 import fastifyHelmet from '@fastify/helmet';
+import fastifyMultipart from '@fastify/multipart';
+
+import { MAX_UPLOAD_BYTES } from './modules/admin/admin.controller';
 
 import { RedisIoAdapter } from './common/adapters/redis-io.adapter';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -17,24 +20,47 @@ import { AppConfig } from './config/configuration';
  */
 /**
  * Paths that sit outside the versioned API. Probes, so orchestrators need not
- * know the version; and item photography, whose URLs are stored in
- * `item.photoUrl` and would otherwise be invalidated wholesale by an API
- * version bump that changed nothing about an image.
+ * know the version; item photography, whose URLs are stored in `item.photoUrl`
+ * and would otherwise be invalidated wholesale by an API version bump that
+ * changed nothing about an image; and the landing page, which is the site's
+ * front door and lives at `/` or nowhere.
  *
  * `*path` rather than `*`: Nest 11 matches with path-to-regexp v8, where a bare
  * wildcard is a syntax error and a named one is required.
  */
-export const UNPREFIXED_ROUTES = ['health/live', 'health/ready', 'media/*path'];
+export const UNPREFIXED_ROUTES = [
+  '/',
+  // The operator's catalogue editor. Unprefixed so it is simply `/admin` —
+  // there is no generated client to keep in step with it, and a version prefix
+  // on a page a human types is friction with no payoff.
+  'admin',
+  'admin/*path',
+  'privacy',
+  'support',
+  'terms',
+  'match/*path',
+  '.well-known/*path',
+  'health/live',
+  'health/ready',
+  'media/*path',
+  // The unfurl image, named in `og:image` as an absolute URL off the bare
+  // origin. Prefixed, it would answer at `/v1/og-card.png` while every crawler
+  // fetched the root path and got a 404 — a share with no picture, and nothing
+  // in the logs to say why.
+  'og-card.png',
+];
 
 /**
  * Response security headers.
  *
- * This API is JSON and item photography — there is no HTML surface left since
- * the server-rendered admin panel was removed, and the catalogue is now built
- * from `items/` at deploy time instead. So the policy denies every active
+ * This API is JSON and item photography, so the policy denies every active
  * content type outright rather than carving out exceptions: no scripts, no
  * styles, no fonts, no frames, no form posts. Nothing here is meant to render
  * as a document, and a directive loosening later should have to justify itself.
+ *
+ * The one HTML surface is the landing page at `/`, and it is deliberately not
+ * an exception here: `LandingController` overrides this header for that route
+ * alone, so the loosened policy cannot leak onto an API response.
  *
  * `imgSrc` keeps `'self'` for `/media`, which a browser genuinely does render.
  */
@@ -73,6 +99,14 @@ export async function configureApp(
   app.setGlobalPrefix(appConfig.apiPrefix, { exclude: UNPREFIXED_ROUTES });
 
   await app.register(fastifyHelmet, HELMET_OPTIONS);
+
+  // Item photography reaches the server exactly once, through the admin
+  // portal's upload. The ceiling is the raw source, before `ImageProcessor`
+  // re-encodes it to the 1080x864 card — generous enough for a camera original
+  // and far below anything that would threaten the decode memory limit.
+  await app.register(fastifyMultipart, {
+    limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 12 },
+  });
 
   // For the app's web target only — native clients never preflight. Its
   // requests carry the X-App-* identity headers, and a custom header without

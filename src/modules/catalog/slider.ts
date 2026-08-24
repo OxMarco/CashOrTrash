@@ -1,4 +1,5 @@
 import { SeededRandom } from 'src/common/utils/seeded-random';
+import { createHmac } from 'node:crypto';
 
 /**
  * The scale a round is played on.
@@ -61,32 +62,40 @@ const FLOOR_RATIO = 0.1;
 /**
  * And never below this, whatever the ratio works out to.
  *
- * `FLOOR_RATIO` is proportional, so on a cheap object it still lands on
- * pennies: a $1.15 card produced a floor of $0.30, which the client renders as
- * "$0" — and a slider whose left end reads zero invites a bet of nothing, which
- * is not a price. One dollar is the smallest number that still reads as one.
+ * `FLOOR_RATIO` is proportional, so on a cheap object it lands on pennies. That
+ * used to be fatal: the client rendered whole units and nothing else, so the
+ * $0.30 floor a $1.15 card produced came out as "$0", and a slider whose left
+ * end reads zero invites a bet of nothing, which is not a price. The client now
+ * renders minor units whenever the round's increment is sub-unit, so the floor
+ * only has to be a number somebody would actually write. A dime is.
  */
-const FLOOR_MIN_CENTS = 100;
+export const FLOOR_MIN_CENTS = 10;
 
 /**
- * The travel a round needs to be playable.
+ * The stops a round needs to be worth dragging.
  *
- * An item too cheap to carry a $1 floor and a readable span cannot produce a
- * good round at any seed, which is why `CatalogImportService` refuses to import
- * one rather than bending the slider around it. Exported so the import can
- * apply the same number this does.
+ * This replaces an absolute minimum span, which was the wrong measure of the
+ * right thing. `PricingService` aims for ~100 stops at every scale, so what
+ * makes a slider draggable is how many stops the travel carries, not how many
+ * cents it covers: a $1 item stepping a cent at a time is exactly as playable
+ * as a $16M boat stepping $100,000 at a time, and an absolute span called the
+ * first one broken and the second one fine.
  */
-export const MIN_SLIDER_SPAN_CENTS = 2_000;
+export const MIN_SLIDER_STOPS = 20;
 
 /**
  * The cheapest object that can carry a readable slider.
  *
- * The narrowest span this can draw is `SPAN_MIN × price`, so a price below
- * `MIN_SLIDER_SPAN_CENTS / SPAN_MIN` cannot clear the bar however the draw
- * falls. Rounded up to a whole $20, because a bound derived to the cent implies
- * a precision that is not there.
+ * Derived rather than chosen. `rawMin` is the larger of `FLOOR_MIN_CENTS` and
+ * `price − position × span`, and the feasibility rule holds `position × span ≤
+ * 1 − FLOOR_RATIO`, so the proportional floor never falls below `FLOOR_RATIO ×
+ * price`. Above this price the proportional floor is the binding one and every
+ * draw frames the answer on the item's own scale. Below it the flat floor wins
+ * instead and pins the left end at or above the answer, leaving the guard at
+ * the end of `deriveSlider` to rescue a slider that should never have been
+ * drawn — so that is exactly where the catalogue stops accepting items.
  */
-export const MIN_IMPORT_PRICE_CENTS = 2_000;
+export const MIN_IMPORT_PRICE_CENTS = FLOOR_MIN_CENTS / FLOOR_RATIO;
 
 export interface SliderBounds {
   sliderMinCents: number;
@@ -209,12 +218,19 @@ export interface SliderScope {
  * The item id is always part of the seed, so the five rounds of one session do
  * not share a draw.
  */
-export function sliderSeed(scope: SliderScope, itemId: number): string {
+export function sliderSeed(
+  scope: SliderScope,
+  itemId: number,
+  secret: string,
+): string {
+  let visibleScope: string;
   if (scope.mode === 'daily' && scope.dailyDate) {
-    return `daily:${scope.dailyDate}:${itemId}`;
+    visibleScope = `daily:${scope.dailyDate}:${itemId}`;
+  } else if (scope.mode === 'h2h' && scope.matchId) {
+    visibleScope = `match:${scope.matchId}:${itemId}`;
+  } else {
+    visibleScope = `session:${scope.id}:${itemId}`;
   }
-  if (scope.mode === 'h2h' && scope.matchId) {
-    return `match:${scope.matchId}:${itemId}`;
-  }
-  return `session:${scope.id}:${itemId}`;
+
+  return createHmac('sha256', secret).update(visibleScope).digest('hex');
 }

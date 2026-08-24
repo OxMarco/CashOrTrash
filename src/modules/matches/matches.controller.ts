@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -50,5 +51,20 @@ export class MatchesController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<MatchDto> {
     return this.matches.getForPlayer(id, userId);
+  }
+
+  // Returns the match rather than 204: the client keeps one match in device
+  // storage and needs the terminal status back to clear it, which a no-content
+  // response would make it fetch again.
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Withdraw a challenge nobody has joined yet. Host only.',
+  })
+  async cancel(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<MatchDto> {
+    return this.matches.cancel(id, userId);
   }
 }

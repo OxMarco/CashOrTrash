@@ -28,5 +28,6 @@ export class SessionCompletedEvent {
     readonly matchId: string | null,
     readonly dailyDate: string | null,
     readonly totalScore: number,
+    readonly leaderboardEligible: boolean,
   ) {}
 }

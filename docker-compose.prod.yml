@@ -1,0 +1,370 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+services:
+  app:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    # Not `ports`: nothing but Traefik should be able to reach the app, and a
+    # published port would bypass TLS termination entirely.
+    expose:
+      - '3000'
+    # PID 1 reaping. Nest registers its own SIGTERM handler via
+    # enableShutdownHooks, so the app drains either way — this is for anything
+    # it spawns.
+    init: true
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      # Cap V8's heap below the container mem_limit so a runaway heap throws
+      # in-process instead of being SIGKILL'd by the cgroup OOM killer.
+      NODE_OPTIONS: --max-old-space-size=768
+      PORT: 3000
+      API_PREFIX: ${API_PREFIX:-v1}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Off by default in production: /docs is a complete map of the API
+      # surface, and the mobile client is generated from the spec at build
+      # time rather than fetched from the live server.
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:?SUPPORT_EMAIL required}
+      # Empty until the app is in the stores: the .well-known association
+      # files 404 and shared /match links open in the browser meanwhile.
+      APPLE_APP_ID: ${APPLE_APP_ID:-}
+      ANDROID_APP_PACKAGE: ${ANDROID_APP_PACKAGE:-fun.cashortrash.app}
+      ANDROID_SHA256_CERT_FINGERPRINT: ${ANDROID_SHA256_CERT_FINGERPRINT:-}
+
+      # Owned by compose, not .env. Postgres is reachable only on the compose
+      # network (no published port, not routed by Traefik), so a strong
+      # password buys nothing and the credentials are the plain defaults.
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: cashortrash
+      DATABASE_USER: cashortrash
+      DATABASE_PASSWORD: cashortrash
+      DATABASE_SSL: 'false'
+      # Left ON, deliberately, while the project is pre-launch: there is no
+      # migration chain, so with this off no table is ever created. Pin it to
+      # 'false' in the same change that adds an initial migration and restores
+      # `migrationsRun` — not before, and not on its own.
+      DATABASE_SYNCHRONIZE: 'true'
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: '0'
+
+      # `:?` rather than a default: the Joi schema requires both at boot, so a
+      # missing value must fail `docker compose up` with a clear message
+      # instead of crash-looping until the smoke check times out.
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET required}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      DEEP_LINK_BASE: https://${DOMAIN:?DOMAIN required}/match
+      # Where a shared result points. Derived from the same DOMAIN as the deep
+      # link so there is one thing to set, not two that can drift apart — but
+      # deliberately the bare origin rather than a /match path: that path is
+      # claimed by the app in both association files, and a shared result wants
+      # to reach the readers who do *not* have the app yet.
+      PUBLIC_ORIGIN: https://${DOMAIN:?DOMAIN required}
+
+      ROUNDS_PER_SESSION: ${ROUNDS_PER_SESSION:-5}
+      # A floor under the shot clock. No honest player prices an object in under
+      # a second; a script does nothing else.
+      MIN_ROUND_SECONDS: ${MIN_ROUND_SECONDS:-1}
+      SLIDER_SEED_SECRET: ${SLIDER_SEED_SECRET:?SLIDER_SEED_SECRET required}
+      # Keys *which items* a day deals, as the secret above keys the scale they
+      # are priced on. Required for the same reason: the only thing in the
+      # unkeyed scope is a calendar date, so without it every future daily can
+      # be computed offline. Its own secret, never the slider's.
+      DAILY_SEED_SECRET: ${DAILY_SEED_SECRET:?DAILY_SEED_SECRET required}
+      # How far ahead dailies are generated, and therefore how long their items
+      # are held out of quick and head-to-head rounds — where finishing a round
+      # reveals the price.
+      DAILY_PREGENERATE_DAYS: ${DAILY_PREGENERATE_DAYS:-1}
+      # How long an item stays out of one player's other rounds once they have
+      # been dealt it, so a known price is not re-asked as a fresh question.
+      ITEM_COOLDOWN_DAYS: ${ITEM_COOLDOWN_DAYS:-30}
+      # Stops an answer learned on one fresh anonymous account being replayed
+      # immediately through a batch of newly minted leaderboard identities.
+      LEADERBOARD_MIN_ACCOUNT_AGE_HOURS: ${LEADERBOARD_MIN_ACCOUNT_AGE_HOURS:-24}
+      # And the two budgets behind that gate: how fast one account can be dealt
+      # new items — across quick and head-to-head alike, since both deal five
+      # and reveal five — and how many accounts one address can register in a
+      # day.
+      QUICK_SESSIONS_PER_HOUR: ${QUICK_SESSIONS_PER_HOUR:-30}
+      ACCOUNTS_PER_IP_PER_DAY: ${ACCOUNTS_PER_IP_PER_DAY:-50}
+      # How long the registering address is kept; a nightly job clears it once
+      # it is past answering for itself.
+      REGISTRATION_IP_RETENTION_DAYS: ${REGISTRATION_IP_RETENTION_DAYS:-30}
+
+      THROTTLE_TTL_MS: ${THROTTLE_TTL_MS:-60000}
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-120}
+
+      PUSH_PROVIDER: expo
+      PUSH_TIMEOUT_MS: ${PUSH_TIMEOUT_MS:-10000}
+
+      MEDIA_ROOT: /var/lib/cashortrash/media
+      MEDIA_PUBLIC_BASE: ${MEDIA_PUBLIC_BASE:-}
+
+      # The catalogue is filled through the admin portal at /admin, and the
+      # model writes each item's title and description shortly after upload.
+      # OPENAI_API_KEY is required in production — see env.validation.ts.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4}
+
+      # The portal's credentials. The hash comes from `npm run admin:hash`; the
+      # secret is independent of JWT_ACCESS_SECRET so a player token can never
+      # be replayed against the catalogue editor.
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?run npm run admin:hash and set it in .env}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?set an independent ADMIN_JWT_SECRET in .env}
+      ADMIN_SESSION_TTL: ${ADMIN_SESSION_TTL:-2h}
+    volumes:
+      # Item photography. Read-write rather than read-only: the app installs the
+      # placeholder derivative on boot and washes the photographs the import
+      # reads off disk, and content-addressed writes are safe from more than one
+      # process by construction — the digest is the content, so two writers
+      # racing on a path are writing identical bytes.
+      #
+      # Note what this means for memory. sharp decodes outside the V8 heap,
+      # where `--max-old-space-size` cannot see it, so an oversized decode is
+      # killed by the cgroup — and with `autoheal=true` below, that kill takes
+      # the API down with it. Two things keep this safe. `ImageProcessor`
+      # rejects on the *declared* dimensions before decoding a pixel, capped at
+      # 40 MP; and the import walks its files strictly one at a time, so peak
+      # usage is a single decode however large the catalogue grows. Making that
+      # walk concurrent would multiply the peak by the concurrency and belongs
+      # in a worker container with its own limit, not here.
+      - mediadata:/var/lib/cashortrash/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'node -e "fetch(''http://localhost:3000/health/live'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 1g
+    cpus: 1.0
+    logging: *default-logging
+    networks:
+      - backend
+    labels:
+      # Docker never acts on health status by itself and Traefik keeps routing
+      # to an unhealthy container; the autoheal sidecar (below) is what turns
+      # the healthcheck above into an actual restart.
+      - 'autoheal=true'
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.app.rule=Host(`${DOMAIN:?DOMAIN required}`)'
+      - 'traefik.http.routers.app.entrypoints=websecure'
+      - 'traefik.http.routers.app.tls=true'
+      - 'traefik.http.routers.app.tls.certresolver=letsencrypt'
+      - 'traefik.http.services.app.loadbalancer.server.port=3000'
+      # www -> apex. Terminated here rather than at a registrar URL forwarder,
+      # which typically only listens on :80 — so `https://www.` fails to
+      # connect at all. This router gets its own Let's Encrypt cert, so the www
+      # hostname answers on TLS and then 301s. Requires a DNS A record for www
+      # pointing at this host, or the HTTP-01 challenge cannot validate.
+      - 'traefik.http.routers.www.rule=Host(`www.${DOMAIN}`)'
+      - 'traefik.http.routers.www.entrypoints=websecure'
+      - 'traefik.http.routers.www.tls=true'
+      - 'traefik.http.routers.www.tls.certresolver=letsencrypt'
+      - 'traefik.http.routers.www.middlewares=www-redirect'
+      # $$ escapes compose interpolation so Traefik receives the regex group $1.
+      - 'traefik.http.middlewares.www-redirect.redirectregex.regex=^https://www\.(.*)'
+      - 'traefik.http.middlewares.www-redirect.redirectregex.replacement=https://$${1}'
+      - 'traefik.http.middlewares.www-redirect.redirectregex.permanent=true'
+      # Head-to-head runs over socket.io on /matches. Traefik proxies the
+      # WebSocket upgrade with no extra configuration — but if this service is
+      # ever scaled past one replica, socket.io's HTTP long-polling fallback
+      # needs sticky sessions (a loadbalancer.sticky.cookie label). The Redis
+      # adapter makes rooms span replicas; it does not make a handshake split
+      # across two of them work.
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cashortrash
+      POSTGRES_USER: cashortrash
+      POSTGRES_PASSWORD: cashortrash
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cashortrash -d cashortrash']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 1g
+    cpus: 1.0
+    logging: *default-logging
+    networks:
+      - backend
+
+  # Daily pg_dump sidecar: one compressed custom-format dump per UTC day into
+  # ./backups on the host, rotated after BACKUP_KEEP_DAYS (default 14) days.
+  # A bind mount, NOT the database's named volume, so loss of that volume does
+  # not take the backups down with the data they exist to restore. Restore via
+  # `make db-restore FILE=backups/<name>.dump`; one-off dump via `make db-backup`.
+  #
+  # ./backups is the only copy. Nothing ships it off the host; if the host is
+  # lost, so are the backups — copy the directory elsewhere on your own cadence.
+  db-backup:
+    # Same pinned image as the postgres service, deliberately: pg_dump must be
+    # at least as new as the server, and reusing the image keeps the pair in
+    # lockstep (and avoids trusting a third-party backup image with DB creds).
+    image: postgres:17-alpine
+    restart: unless-stopped
+    entrypoint: ['/bin/sh', '/db-backup.sh']
+    environment:
+      # Standard libpq env vars so pg_dump/pg_restore need no flags.
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: cashortrash
+      PGUSER: cashortrash
+      PGPASSWORD: cashortrash
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      MEDIA_KEEP_WEEKS: ${MEDIA_KEEP_WEEKS:-4}
+    volumes:
+      - ./scripts/db-backup.sh:/db-backup.sh:ro
+      - ./backups:/backups
+      # Read-only, and here rather than in its own sidecar because a restored
+      # pg_dump whose media did not come with it leaves every item pointing at
+      # a file that no longer exists. The database and the photographs it names
+      # are one backup, not two.
+      - mediadata:/media:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # Alarm when the newest dump is older than 26h (24h cadence + slack):
+      # a backup sidecar that silently stopped producing dumps is strictly
+      # worse than no sidecar, because it ends belief in the need for one.
+      test:
+        ['CMD-SHELL', 'find /backups -name "*.dump" -mmin -1560 | grep -q .']
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 2m
+    mem_limit: 256m
+    cpus: 0.25
+    logging: *default-logging
+    networks:
+      - backend
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # BullMQ's job schedulers and queued jobs are application state, not
+    # disposable cache entries: losing them means the daily challenge is not
+    # generated and the evening nudge never fires. AOF (fsync every second)
+    # preserves them across a restart. The leaderboard ZSETs are rebuildable
+    # from Postgres, and cache/throttle keys are TTL-bound, so those would
+    # survive a wipe on their own.
+    command:
+      [
+        'redis-server',
+        '--appendonly',
+        'yes',
+        '--appendfsync',
+        'everysec',
+        '--maxmemory',
+        '220mb',
+        # noeviction, not allkeys-lru: evicting under pressure would silently
+        # drop queued jobs rather than fail a write loudly.
+        '--maxmemory-policy',
+        'noeviction',
+      ]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 256m
+    cpus: 0.5
+    logging: *default-logging
+    networks:
+      - backend
+
+  # Docker never restarts a container for being unhealthy on its own; autoheal
+  # restarts anything labelled autoheal=true, which is what makes the app's
+  # healthcheck mean something rather than just colouring `docker ps`.
+  autoheal:
+    image: willfarrell/autoheal:1.2.0
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    mem_limit: 64m
+    cpus: 0.1
+    logging: *default-logging
+    network_mode: none
+
+  traefik:
+    # Exact pin: `v3` floats across minors, which have shipped config-breaking
+    # changes before. Bump deliberately, not via a routine `compose pull`.
+    image: traefik:v3.7.6
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    command:
+      - '--providers.docker=true'
+      # Nothing is routed unless it opts in with traefik.enable=true, so
+      # postgres and redis cannot be exposed by forgetting a label.
+      - '--providers.docker.exposedbydefault=false'
+      - '--providers.docker.network=backend'
+      # :80 exists only to answer the ACME HTTP-01 challenge and to bounce
+      # everything else to TLS.
+      - '--entrypoints.web.address=:80'
+      - '--entrypoints.web.http.redirections.entrypoint.to=websecure'
+      - '--entrypoints.web.http.redirections.entrypoint.scheme=https'
+      - '--entrypoints.websecure.address=:443'
+      - '--entrypoints.websecure.http.tls=true'
+      - '--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?ACME_EMAIL required}'
+      - '--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json'
+      - '--certificatesresolvers.letsencrypt.acme.httpchallenge=true'
+      - '--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web'
+      # Nest already records method, path, status and latency without retaining
+      # client addresses. A second proxy access log would duplicate that data
+      # while extending the lifetime of IP addresses for no operational gain.
+      - '--accesslog=false'
+      - '--log.level=INFO'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # A named volume, so issued certificates survive `docker compose down`.
+      # Let's Encrypt rate-limits to 5 duplicate certificates per week; losing
+      # acme.json a few times is enough to lock the domain out for days.
+      - traefik_letsencrypt:/letsencrypt
+    mem_limit: 128m
+    cpus: 0.5
+    logging: *default-logging
+    networks:
+      - backend
+
+volumes:
+  pgdata:
+  redisdata:
+  traefik_letsencrypt:
+  # Washed item photographs, content-addressed. Backed up as a weekly tar into
+  # ./backups by the db-backup sidecar — losing this volume without that tar
+  # means every item in the catalogue renders a broken image, and the originals
+  # are on somebody else's server.
+  mediadata:
+
+networks:
+  backend:
+    driver: bridge

@@ -1,13 +1,13 @@
 import { BullModule, InjectQueue } from '@nestjs/bullmq';
 import { Logger, Module, OnApplicationBootstrap } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 
-import { ImportConfig } from 'src/config/configuration';
 import { CatalogModule } from '../catalog/catalog.module';
 import { DailyModule } from '../daily/daily.module';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
+import { MatchesModule } from '../matches/matches.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { UsersModule } from '../users/users.module';
 import { JOB_SCHEDULES, JOBS, MAINTENANCE_QUEUE } from './jobs.constants';
 import { MaintenanceProcessor } from './maintenance.processor';
 
@@ -26,6 +26,8 @@ import { MaintenanceProcessor } from './maintenance.processor';
     LeaderboardModule,
     CatalogModule,
     NotificationsModule,
+    UsersModule,
+    MatchesModule,
   ],
   providers: [MaintenanceProcessor],
   exports: [BullModule],
@@ -33,10 +35,7 @@ import { MaintenanceProcessor } from './maintenance.processor';
 export class JobsModule implements OnApplicationBootstrap {
   private readonly logger = new Logger(JobsModule.name);
 
-  constructor(
-    @InjectQueue(MAINTENANCE_QUEUE) private readonly queue: Queue,
-    private readonly config: ConfigService,
-  ) {}
+  constructor(@InjectQueue(MAINTENANCE_QUEUE) private readonly queue: Queue) {}
 
   /**
    * Registered on every boot on purpose. `upsertJobScheduler` is keyed on the
@@ -58,33 +57,29 @@ export class JobsModule implements OnApplicationBootstrap {
         `${JOBS.LEADERBOARD_REBUILD} repair`,
     );
 
-    await this.enqueueCatalogueImport();
+    await this.enqueueItemCopy();
   }
 
   /**
-   * Queues the catalogue import rather than running it here.
+   * Sweeps up copy the portal is still owed, once per boot.
    *
-   * A deploy ships new files, so the import belongs to the boot — but not to
-   * the boot *path*. `make deploy` smoke-tests `/health/ready`, and a cold
-   * import that washes fifty photographs and calls a language model in between
-   * would hold readiness open long enough to look like a failed deploy.
+   * The portal enqueues this itself on every upload, so in steady state the
+   * boot run finds nothing. It exists for the case the portal cannot cover: a
+   * process that died mid-pass, or an OpenAI outage that ran through the job's
+   * retries. Those items sit flagged in the database and would otherwise wait
+   * for the next upload to carry them along.
    *
-   * The job carries no payload and its id is the job name, so the queue itself
-   * collapses simultaneous boots into one entry. That is a convenience, not the
-   * guarantee: a completed job eventually falls out of `removeOnComplete`, so
-   * the processor takes an advisory lock as the actual guard.
+   * Queued rather than run here. `make deploy` smoke-tests `/health/ready`, and
+   * a backlog that calls a language model for two dozen items would hold
+   * readiness open long enough to look like a failed deploy.
+   *
+   * Every boot gets a fresh job. Reusing a fixed id looks attractive, but
+   * BullMQ also de-duplicates against retained *completed* jobs, so a backlog
+   * could then be skipped until 200 unrelated jobs had run. The processor's
+   * advisory lock is the actual cross-replica guard.
    */
-  private async enqueueCatalogueImport(): Promise<void> {
-    if (!this.config.getOrThrow<ImportConfig>('import').onBoot) {
-      this.logger.log('Catalogue import disabled (IMPORT_ON_BOOT=false)');
-      return;
-    }
-
-    await this.queue.add(
-      JOBS.CATALOGUE_IMPORT,
-      {},
-      { jobId: JOBS.CATALOGUE_IMPORT },
-    );
-    this.logger.log('Queued the catalogue import');
+  private async enqueueItemCopy(): Promise<void> {
+    await this.queue.add(JOBS.ITEM_COPY, {});
+    this.logger.log('Queued a catch-up pass for outstanding item copy');
   }
 }

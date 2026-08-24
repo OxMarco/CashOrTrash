@@ -1,0 +1,60 @@
+# Backend release checklist
+
+Production is intentionally fail-closed. Do not weaken the checks below to make
+a deployment pass; supply the real release inputs instead.
+
+## Before the first production deploy
+
+- [ ] Set `ADMIN_PASSWORD_HASH` from `npm run admin:hash` and an independent
+  `ADMIN_JWT_SECRET`. Production refuses to boot without both. Confirm `/admin`
+  is reachable, that a wrong password is refused, and that the attempt budget
+  bites after ten failures from one address.
+- [ ] Fill the catalogue through `/admin`: at least five categories holding a
+  full round each, or `/health/ready` stays red. Before uploading a photograph,
+  satisfy yourself you have the right to publish it — nothing in the pipeline
+  checks that any more, and every image ships inside a store binary's reach.
+- [ ] Replace every example value in the production `.env`, including `DOMAIN`,
+  `SUPPORT_EMAIL`, `ACME_EMAIL`, the database password, three independent auth
+  and game secrets, and `OPENAI_API_KEY`.
+- [ ] Set `APPLE_APP_ID` to the Apple Team ID plus the shipped bundle ID. Set
+  `ANDROID_APP_PACKAGE` and the Play App Signing certificate's SHA-256
+  fingerprint, not a local debug certificate.
+- [ ] Point apex and optional `www` DNS records at the host before starting the
+  stack so TLS issuance can succeed.
+- [ ] Put an external uptime alert on `https://<domain>/health/ready`; container
+  auto-healing is not an alert and cannot report a dead host.
+
+## Release candidate
+
+- [ ] Run `npm ci`, `npm run lint:check`, `npm run build`, `npm test --
+  --runInBand`, `npm run test:e2e`, `npm run check:knip`, and
+  `npm audit --omit=dev` on a machine with Docker running.
+- [ ] Run `docker compose -f docker-compose.prod.yml config` with the real
+  production environment and review the rendered image tags, domains, mounts,
+  resource limits, and secrets references.
+- [ ] Build the production image and scan it with the registry or host's image
+  scanner before promotion.
+- [ ] Restore the newest database dump and matching media archive into a
+  disposable environment, then run the smoke check there. Never rehearse a
+  restore against the live database.
+
+## Deploy and verify
+
+- [ ] Run `make deploy`, then confirm `make health` shows the API, database,
+  Redis, local backup, and off-site backup services healthy.
+- [ ] Confirm `/health/ready` reports the catalogue and queue healthy. It needs
+  five categories each holding a full round; a category short of one is not
+  playable and does not count.
+- [ ] Upload one item and confirm the copy job replaces its typed-in text with
+  written prose in English, Spanish, Portuguese and Italian within a minute, and
+  that no description mentions the price.
+- [ ] Fetch `/.well-known/apple-app-site-association` and
+  `/.well-known/assetlinks.json` from the public HTTPS hostname and compare the
+  identifiers with the signed store builds.
+- [ ] Exercise anonymous sign-in, one quick game, one daily game, one
+  head-to-head invite, push opt-in/unregister, and in-app account deletion on
+  the deployed API.
+- [ ] Confirm `/admin` is not indexable and that its API routes answer 401
+  without a token — a player token included.
+- [ ] Confirm a fresh dump and off-site Restic snapshot appear after deployment,
+  then record the tested release SHA and rollback dump name.

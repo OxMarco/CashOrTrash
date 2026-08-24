@@ -11,8 +11,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   imports: [
     UsersModule,
     PassportModule.register({ defaultStrategy: 'jwt', session: false }),
-    // Secrets are passed per-sign/verify call in AuthService, because access
-    // and refresh tokens deliberately use different ones.
+    // The secret is passed per-sign call in AuthService and per-verify call in
+    // JwtStrategy, keeping the empty module registration free of hidden config.
     JwtModule.register({}),
   ],
   controllers: [AuthController],

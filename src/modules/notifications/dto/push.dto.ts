@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Expose } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -10,6 +11,11 @@ import {
   Min,
 } from 'class-validator';
 
+import {
+  DEFAULT_LANGUAGE,
+  Language,
+  SUPPORTED_LANGUAGES,
+} from '../../catalog/language.constants';
 import { PushPlatform } from '../entities/push-token.entity';
 
 export class RegisterPushTokenDto {
@@ -32,6 +38,18 @@ export class RegisterPushTokenDto {
   @Min(-720)
   @Max(840)
   timezoneOffsetMinutes?: number;
+
+  @ApiPropertyOptional({
+    enum: SUPPORTED_LANGUAGES,
+    default: DEFAULT_LANGUAGE,
+    description:
+      'The language to send this device’s nudges in. Push copy is composed on ' +
+      'the server long after the app last ran, so it cannot be read from the ' +
+      'request that receives it.',
+  })
+  @IsOptional()
+  @IsIn(SUPPORTED_LANGUAGES)
+  locale?: Language;
 }
 
 export class PushRegistrationDto {

@@ -16,6 +16,12 @@ export enum MatchStatus {
   PENDING = 'pending',
   ACTIVE = 'active',
   COMPLETE = 'complete',
+  /**
+   * Nobody took the code in time, or the host withdrew it. Terminal, and
+   * carries the same empty fields as `pending` — an invite that expires was
+   * never a game, so there is no guest, no completion and no winner to record.
+   */
+  EXPIRED = 'expired',
 }
 
 @Entity('match')
@@ -31,7 +37,7 @@ export enum MatchStatus {
 )
 @Check(
   'ck_match_status_fields',
-  `("status" = 'pending' AND "guestUserId" IS NULL AND "completedAt" IS NULL AND "winnerUserId" IS NULL) OR
+  `("status" IN ('pending', 'expired') AND "guestUserId" IS NULL AND "completedAt" IS NULL AND "winnerUserId" IS NULL) OR
    ("status" = 'active' AND "guestUserId" IS NOT NULL AND "completedAt" IS NULL AND "winnerUserId" IS NULL) OR
    ("status" = 'complete' AND "guestUserId" IS NOT NULL AND "completedAt" IS NOT NULL)`,
 )

@@ -28,6 +28,9 @@ export class ThemeStat {
   updatedAt: Date;
 
   @OneToOne(() => Theme, (theme) => theme.stat, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'themeId' })
+  @JoinColumn({
+    name: 'themeId',
+    foreignKeyConstraintName: 'fk_theme_stat_theme',
+  })
   theme?: Theme;
 }

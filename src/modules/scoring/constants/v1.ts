@@ -1,9 +1,8 @@
+import type { ScoringConstants } from './types';
+
 /**
- * Scoring constants, version 1.
- *
- * Every SessionRound persists the version that produced it, so retuning this
- * curve is an additive change (add `v2.ts`, point CURRENT_SCORING at it) and
- * never a rescoring of historical leaderboards.
+ * Scoring constants, version 1. Frozen: rounds scored under it stay scored
+ * under it, which is what keeps historical leaderboards meaningful.
  *
  * The numbers are pinned against the two worked examples in the design bundle
  * rather than invented:
@@ -22,7 +21,6 @@
 export const SCORING_V1 = {
   version: 'v1',
 
-  /** Points awarded for a dead-centre guess, before the multiplier. */
   BASE_MAX: 140,
 
   /**
@@ -32,16 +30,20 @@ export const SCORING_V1 = {
    */
   TOLERANCE: 0.4,
 
-  /** Multiplier at or above WIDE_WIDTH_PCT — the "wide & safe" end. */
+  /**
+   * v1 has no floor: past TOLERANCE a hit scores nothing, which is the rule v2
+   * exists to replace. Present here so both versions share one code path.
+   */
+  HIT_FLOOR: 0,
+
   MULT_MIN: 1.2,
-
-  /** Multiplier at or below NARROW_WIDTH_PCT — the "narrow & bold" end. */
   MULT_MAX: 2.5,
-
-  /** Range width, as a fraction of the slider span, that earns MULT_MAX. */
   NARROW_WIDTH_PCT: 0.05,
 
-  /** Range width, as a fraction of the slider span, that earns MULT_MIN. */
+  /**
+   * Past 60% width the curve goes flat, so the widest bet on the board pays the
+   * same 1.2 as a merely wide one. v2 removes that flat spot.
+   */
   WIDE_WIDTH_PCT: 0.6,
 
   /**
@@ -50,14 +52,4 @@ export const SCORING_V1 = {
    * quietly disagreeing with the arithmetic the player just watched.
    */
   MULTIPLIER_DECIMALS: 1,
-} as const;
-
-export type ScoringConstants = typeof SCORING_V1;
-
-/** The constant set new rounds are scored with. */
-export const CURRENT_SCORING = SCORING_V1;
-
-/** Every set we can still re-score with, keyed by the persisted version. */
-export const SCORING_VERSIONS: Record<string, ScoringConstants> = {
-  [SCORING_V1.version]: SCORING_V1,
-};
+} as const satisfies ScoringConstants;

@@ -57,6 +57,17 @@ export class PushToken {
   @CreateDateColumn({ type: 'timestamptz' })
   optInAt: Date;
 
+  /**
+   * The language this device wants its nudges in — `en`, `es`, `pt`, `it`.
+   *
+   * On the token rather than the user because it describes a device: one
+   * account can have a phone in Italian and a tablet in English, and the nudge
+   * that lands on each should be in the language that device is set up in.
+   * A language the server has no copy for falls back to English at send time.
+   */
+  @Column({ type: 'varchar', length: 5, default: 'en' })
+  locale: string;
+
   @Column({ type: 'boolean', default: true })
   active: boolean;
 }

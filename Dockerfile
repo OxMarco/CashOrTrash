@@ -22,21 +22,17 @@ ENV NODE_ENV=production
 
 COPY package*.json ./
 # Production dependencies only. `typeorm` is among them because it is the ORM
-# the app runs on — not for its CLI, which nothing invokes: the schema is
-# applied from the entities on boot and there is no migration step to run here.
+# the app runs on — migrations are compiled into `dist` and run by the app at
+# boot, so no TypeORM CLI or development dependency is needed in this image.
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 COPY --from=builder --chown=node:node /app/dist ./dist
 # The placeholder item photo, resolved relative to `dist`. Its sha256 is what
 # an item with no photograph carries in `item.photoUrl`, so without this every
-# such item in the catalogue 404s its image.
+# such item in the catalogue 404s its image. Also carries the admin portal's
+# page, script and stylesheet, which the controller reads from here at request
+# time — without them `/admin` answers 500 rather than rendering.
 COPY --chown=node:node assets ./assets
-# The catalogue itself. This is the delivery mechanism: the import job reads
-# this tree on boot, so adding items is a matter of committing files here and
-# redeploying. Already-imported images are recognised by content hash and cost
-# nothing on the next deploy.
-COPY --chown=node:node items ./items
-
 # sharp ships its libvips binaries as optional *dependencies*, not install
 # scripts, so `--ignore-scripts` above does not skip them. Proving that at build
 # time rather than on the first ingest job: a broken binary should fail the
@@ -52,4 +48,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 \
   CMD node -e "fetch('http://localhost:3000/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node", "dist/main.js"]
+CMD ["node", "dist/src/main.js"]

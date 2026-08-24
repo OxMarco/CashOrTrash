@@ -2,6 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "src/main.ts",
+    // Loaded by TypeORM from the configured glob rather than a TS import.
     "scripts/*.{ts,mjs}",
     "test/**/*.e2e-spec.ts",
     "test/support/global-{setup,teardown}.ts",

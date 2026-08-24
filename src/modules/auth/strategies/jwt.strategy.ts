@@ -5,11 +5,15 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 
 import { AuthenticatedUser } from 'src/common/decorators/current-user.decorator';
 import { AuthConfig } from 'src/config/configuration';
+import { UsersService } from 'src/modules/users/users.service';
 import { TokenType, AccessTokenPayload } from '../auth.types';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly users: UsersService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -17,16 +21,16 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     });
   }
 
-  /**
-   * Refresh tokens are signed with a different secret *and* carry a type
-   * claim — either alone would do, but the pair means a refresh token can
-   * never be replayed as an access token by accident.
-   */
-  validate(payload: AccessTokenPayload): AuthenticatedUser {
+  async validate(payload: AccessTokenPayload): Promise<AuthenticatedUser> {
     if (payload.typ !== TokenType.ACCESS) {
       throw new UnauthorizedException('Access token required');
     }
 
-    return { id: Number(payload.sub), username: payload.username ?? null };
+    const id = Number(payload.sub);
+    if (!Number.isSafeInteger(id) || !(await this.users.findById(id))) {
+      throw new UnauthorizedException('Player no longer exists');
+    }
+
+    return { id, username: payload.username ?? null };
   }
 }

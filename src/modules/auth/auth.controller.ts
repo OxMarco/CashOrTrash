@@ -1,14 +1,18 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Req,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { FastifyRequest } from 'fastify';
 
 import { Public } from 'src/common/decorators/public.decorator';
 import { AuthService } from './auth.service';
-import {
-  AnonymousAuthDto,
-  RefreshTokenDto,
-  TokenPairDto,
-} from './dto/anonymous-auth.dto';
+import { AnonymousAuthDto, AccessTokenDto } from './dto/anonymous-auth.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -21,18 +25,14 @@ export class AuthController {
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({
     summary:
-      'Exchange a device id for a token pair, registering on first sight.',
+      'Exchange a device id for a short-lived access token, registering on first sight.',
   })
-  async anonymous(@Body() dto: AnonymousAuthDto): Promise<TokenPairDto> {
-    return this.auth.authenticateDevice(dto.deviceId);
-  }
-
-  @Public()
-  @Post('refresh')
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 60, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Trade a refresh token for a fresh pair.' })
-  async refresh(@Body() dto: RefreshTokenDto): Promise<TokenPairDto> {
-    return this.auth.refresh(dto.refreshToken);
+  async anonymous(
+    @Body() dto: AnonymousAuthDto,
+    @Req() req: FastifyRequest,
+  ): Promise<AccessTokenDto> {
+    // Fastify runs with `trustProxy: 1`, so this is the client behind the one
+    // ingress hop rather than the hop itself.
+    return this.auth.authenticateDevice(dto.deviceId, req.ip ?? null);
   }
 }

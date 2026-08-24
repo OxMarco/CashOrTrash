@@ -4,7 +4,7 @@ import {
   CURRENT_SCORING,
   SCORING_VERSIONS,
   ScoringConstants,
-} from './constants/v1';
+} from './constants';
 
 export interface ScoreInput {
   truePriceCents: number;
@@ -89,8 +89,18 @@ export class ScoringService {
       };
     }
 
+    // Precision earns everything above HIT_FLOOR; containing the price at all
+    // earns the floor itself. Under a version with no floor (v1) this is the
+    // original `BASE_MAX × closeness`, which is why both share the line.
+    //
+    // The floor is only safe to pay because the multiplier curve charges for
+    // width all the way to the full board — see v2's note. Raising HIT_FLOOR
+    // without checking MULT_MIN is how "bet the whole slider" becomes the
+    // dominant strategy.
     const closeness = 1 - clamp(Math.abs(errorPct) / k.TOLERANCE, 0, 1);
-    const basePoints = Math.round(k.BASE_MAX * closeness);
+    const basePoints = Math.round(
+      k.BASE_MAX * (k.HIT_FLOOR + (1 - k.HIT_FLOOR) * closeness),
+    );
     const points = Math.round(basePoints * multiplier * (1 + themeBonusPct));
 
     return {
@@ -125,6 +135,36 @@ export class ScoringService {
       k.MULT_MAX + (k.MULT_MIN - k.MULT_MAX) * t,
       k.MULTIPLIER_DECIMALS,
     );
+  }
+
+  /**
+   * The multiplier curve as data, for a client to draw the live slider label
+   * with.
+   *
+   * `multiplierFor` above is the same curve as behaviour, and a client cannot
+   * call it — which is exactly how a second, drifting copy of these five numbers
+   * ended up in the app. Handing them over is the narrowest thing that removes
+   * the reason to reimplement them: enough to label a bet mid-drag, and nothing
+   * that would let a client decide what a round is worth.
+   */
+  curveFor(version: string = CURRENT_SCORING.version): {
+    max: number;
+    min: number;
+    narrowWidthPct: number;
+    wideWidthPct: number;
+    decimals: number;
+    scoringVersion: string;
+  } {
+    const k = this.constantsFor(version);
+
+    return {
+      max: k.MULT_MAX,
+      min: k.MULT_MIN,
+      narrowWidthPct: k.NARROW_WIDTH_PCT,
+      wideWidthPct: k.WIDE_WIDTH_PCT,
+      decimals: k.MULTIPLIER_DECIMALS,
+      scoringVersion: k.version,
+    };
   }
 
   constantsFor(version: string): ScoringConstants {

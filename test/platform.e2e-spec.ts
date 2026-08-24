@@ -51,7 +51,7 @@ describe('platform surface', () => {
       expect(response.status).toBe(200);
       expect(response.body.status).toBe('ok');
       expect(Object.keys(response.body.info)).toEqual(
-        expect.arrayContaining(['database', 'redis', 'queue']),
+        expect.arrayContaining(['database', 'redis', 'queue', 'catalogue']),
       );
     });
 

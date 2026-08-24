@@ -16,21 +16,10 @@ export class AnonymousAuthDto {
   deviceId: string;
 }
 
-export class RefreshTokenDto {
-  @ApiProperty()
-  @IsString()
-  @Length(16, 4096)
-  refreshToken: string;
-}
-
-export class TokenPairDto {
+export class AccessTokenDto {
   @ApiProperty()
   @Expose()
   accessToken: string;
-
-  @ApiProperty()
-  @Expose()
-  refreshToken: string;
 
   @ApiProperty({ description: 'Access token lifetime in seconds.' })
   @Expose()
