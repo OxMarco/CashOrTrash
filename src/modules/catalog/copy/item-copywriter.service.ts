@@ -346,8 +346,13 @@ export class ItemCopywriter {
     instructions: string,
     input: string,
   ): Promise<z.infer<typeof CopyBatch>> {
+    // Bounded rather than left on the SDK's defaults — see the note on
+    // `openaiTimeoutMs`. The retries are the SDK's own, declared here so the
+    // worst case a caller is signing up for is one multiplication away.
     const client = (this.client ??= new OpenAI({
       apiKey: this.config.openaiApiKey,
+      timeout: this.config.openaiTimeoutMs,
+      maxRetries: this.config.openaiMaxRetries,
     }));
 
     // `parse` rather than `create`: the same request, with the reply run back

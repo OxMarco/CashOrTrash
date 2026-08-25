@@ -3,23 +3,18 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 
 /**
- * The schema `synchronize` cannot describe.
+ * Schema invariants TypeORM metadata cannot describe.
  *
  * TypeORM builds indexes from entity metadata, and metadata has no way to say
  * "unique across a constant expression, filtered by a predicate". So the one
- * index below has no decorator to live on, and `synchronize` — which drops
- * whatever it finds on the table and cannot account for — would remove it on
- * the next boot. Reapplying it here keeps the invariant holding in every
- * environment, on the same boot that built the rest of the schema.
+ * index below has no decorator to live on. Reapplying it here keeps the
+ * invariant holding after migrations and verifies it on every boot.
  *
  * `IF NOT EXISTS` makes every statement here safe to run on each boot; that is
  * the price of admission for anything added to this list.
  *
- * With the migration chain gone, this is now the *only* place schema that the
- * entities cannot describe can live. Every environment builds from
- * `synchronize`, and synchronize drops what it cannot account for — so an index
- * that is not expressible as metadata and not listed here does not merely fail
- * to be created, it gets removed on the next boot.
+ * A failure is fatal. The services below assume these guarantees exist; serving
+ * traffic without them is worse than refusing startup with the exact DDL error.
  */
 const EXTRA_DDL: readonly string[] = [
   // The picker renders exactly one mystery row, and "two active mystery
@@ -41,6 +36,18 @@ const EXTRA_DDL: readonly string[] = [
   // and the alternative is a scan of every match ever played.
   `CREATE INDEX IF NOT EXISTS "ix_match_pending_created"
      ON "match" ("createdAt") WHERE status = 'pending'`,
+  // Serves the hourly nudge sweep, which asks for the active tokens in the
+  // handful of timezone buckets currently at the target local hour. Without it
+  // that is a scan of every token ever registered, once an hour, to find the
+  // few per cent of them it is actually the evening for.
+  `CREATE INDEX IF NOT EXISTS "ix_push_token_active_offset"
+     ON "push_token" ("timezoneOffsetMinutes") WHERE active = true`,
+  // Serves the hourly theme-stat recompute, which now aggregates a rolling
+  // window rather than all history. Without it the window bound is read off a
+  // full scan of every round ever played, which is the cost the bound exists
+  // to avoid.
+  `CREATE INDEX IF NOT EXISTS "ix_session_round_placed_at"
+     ON "session_round" ("placedAt")`,
 ];
 
 @Injectable()
@@ -54,14 +61,11 @@ export class SchemaExtras implements OnApplicationBootstrap {
       try {
         await this.dataSource.query(statement);
       } catch (error) {
-        // Worth shouting about — the database is now missing a guarantee the
-        // code above it assumes — but not worth refusing to start over, which
-        // would leave a developer with an API that will not boot and no
-        // obvious reason why.
         this.logger.error(
           `Could not apply schema extra: ${statement.trim().split('\n')[0]}…`,
           error instanceof Error ? error.stack : String(error),
         );
+        throw error;
       }
     }
   }

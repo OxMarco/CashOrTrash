@@ -1,10 +1,13 @@
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Cache } from 'cache-manager';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'node:crypto';
 import { DataSource, EntityManager, LessThan, Repository } from 'typeorm';
@@ -28,6 +31,18 @@ import {
 import { SessionRound } from '../sessions/entities/session-round.entity';
 import { User } from './entities/user.entity';
 import { UsernameService, USERNAME_TAKEN } from './username.service';
+
+/**
+ * How long "this account still exists" may be believed without asking.
+ *
+ * Short, because what it gates is whether a deleted player's token still opens
+ * the door, and the window is how long that can outlive the deletion on a
+ * replica that never saw it. `deleteAccount` drops the key outright, so the
+ * window only matters if that cleanup itself fails.
+ */
+const EXISTS_CACHE_TTL_MS = 30_000;
+
+const existsCacheKey = (id: number): string => `auth:user-exists:${id}`;
 
 /** How far into today's challenge a player is — see `DailyProgressDto`. */
 export interface DailyProgress {
@@ -57,6 +72,7 @@ export class UsersService {
     private readonly currency: CurrencyService,
     private readonly usernames: UsernameService,
     private readonly dataSource: DataSource,
+    @Inject(CACHE_MANAGER) private readonly cache: Cache,
     config: ConfigService,
   ) {
     const app = config.getOrThrow<AppConfig>('app');
@@ -194,6 +210,40 @@ export class UsersService {
 
   findById(id: number): Promise<User | null> {
     return this.users.findOne({ where: { id } });
+  }
+
+  /**
+   * Whether this account still exists, answered from a short-lived shared
+   * cache.
+   *
+   * Every authenticated request asks this — it is how a token belonging to a
+   * deleted player stops working — so asking Postgres each time put a query in
+   * front of every route in the API for an answer that changes once in an
+   * account's life. Cached in Redis rather than per process, so the deletion
+   * below invalidates it for the whole cluster and not just the replica that
+   * happened to serve the delete.
+   *
+   * Only the positive is cached. A miss is a token for an account that is gone
+   * or never was, which is rare and not worth remembering, and never caching it
+   * keeps the failure mode "one query too many" rather than "a live account
+   * locked out".
+   *
+   * Cache faults fall through to the database: this is an availability
+   * optimisation, and it must not become a way for Redis to refuse logins.
+   */
+  async stillExists(id: number): Promise<boolean> {
+    const key = existsCacheKey(id);
+
+    const cached = await this.cache.get<boolean>(key).catch(() => undefined);
+    if (cached) return true;
+
+    const exists = await this.users.exist({ where: { id } });
+    if (exists) {
+      await this.cache
+        .set(key, true, EXISTS_CACHE_TTL_MS)
+        .catch(() => undefined);
+    }
+    return exists;
   }
 
   async getById(id: number): Promise<User> {
@@ -335,6 +385,11 @@ export class UsersService {
       await manager.delete(GameSession, { userId });
       await manager.delete(User, { id: userId });
     });
+
+    // After the commit, so the key cannot be repopulated by a concurrent
+    // request reading the row this transaction was still holding. Best effort:
+    // the entry expires on its own, and the authoritative row is already gone.
+    await this.cache.del(existsCacheKey(userId)).catch(() => undefined);
   }
 
   /**

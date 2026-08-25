@@ -48,6 +48,15 @@ describe('production environment validation', () => {
     });
   });
 
+  it('rejects the legacy schema synchronization switch', () => {
+    const { error } = envValidationSchema.validate({
+      ...productionEnvironment,
+      DATABASE_SYNCHRONIZE: 'true',
+    });
+
+    expect(error?.message).toContain('DATABASE_SYNCHRONIZE');
+  });
+
   it('turns the dwell floor on, and keeps the draw exclusions armed', () => {
     const { value } = envValidationSchema.validate(productionEnvironment);
 

@@ -201,11 +201,17 @@ export class MatchesService {
   }
 
   async toDtoFor(match: Match): Promise<MatchDto> {
-    const theme = await this.catalog.getThemeById(match.themeId);
+    // Presence for the whole room once, then read per player below. Both
+    // players are in the same room, and the lookup is a cluster-wide broadcast.
+    const [theme, online] = await Promise.all([
+      this.catalog.getThemeById(match.themeId),
+      this.gateway.onlineUserIds(match.id),
+    ]);
+
     const [host, guest] = await Promise.all([
-      this.playerDto(match, match.hostUserId, match.hostScore),
+      this.playerDto(match, match.hostUserId, match.hostScore, online),
       match.guestUserId
-        ? this.playerDto(match, match.guestUserId, match.guestScore)
+        ? this.playerDto(match, match.guestUserId, match.guestScore, online)
         : Promise.resolve(null),
     ]);
 
@@ -226,6 +232,7 @@ export class MatchesService {
     match: Match,
     userId: number,
     score: number,
+    online: Set<number>,
   ): Promise<MatchPlayerDto> {
     const [user, session] = await Promise.all([
       this.users.findOne({ where: { id: userId } }),
@@ -243,7 +250,7 @@ export class MatchesService {
       score,
       roundsPlayed,
       // Presence on the match socket *is* the live dot next to "vs Maria".
-      online: await this.gateway.isOnline(match.id, userId),
+      online: online.has(userId),
     });
   }
 }

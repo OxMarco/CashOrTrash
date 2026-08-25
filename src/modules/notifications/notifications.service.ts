@@ -73,6 +73,12 @@ export class NotificationsService {
     await this.tokens.update({ token }, { active: false });
   }
 
+  /** The same, for a whole sweep's worth of tokens the provider disowned. */
+  async deactivateAll(tokens: string[]): Promise<void> {
+    if (tokens.length === 0) return;
+    await this.tokens.update({ token: In(tokens) }, { active: false });
+  }
+
   async deactivateForUser(userId: number): Promise<void> {
     await this.tokens.update({ userId }, { active: false });
   }
@@ -91,18 +97,24 @@ export class NotificationsService {
     });
     if (tokens.length === 0) return 0;
 
-    const byUser = new Map<number, PushToken[]>();
-    for (const token of tokens) {
-      byUser.set(token.userId, [...(byUser.get(token.userId) ?? []), token]);
-    }
+    const byUser = groupBy(tokens, (token) => token.userId);
+    const userIds = [...byUser.keys()];
 
-    const played = await this.usersWhoPlayedToday([...byUser.keys()]);
+    // Both in one query each. A `findOne` per player inside the loop below is
+    // one round trip per person nudged, on a job whose whole point is that it
+    // runs against every timezone bucket every hour.
+    const [played, profiles] = await Promise.all([
+      this.usersWhoPlayedToday(userIds),
+      this.usersById(userIds),
+    ]);
+
     let sent = 0;
     let failed = 0;
+    const retired: string[] = [];
 
     for (const [userId, userTokens] of byUser) {
       const hasPlayed = played.has(userId);
-      const user = await this.users.findOne({ where: { id: userId } });
+      const user = profiles.get(userId);
       if (!user) continue;
 
       const streakAtRisk =
@@ -120,13 +132,7 @@ export class NotificationsService {
       // one per player. A phone in Italian and a tablet in English belong to
       // the same account and want different words, and grouping by language is
       // what stops a second device from silently deciding the first one's.
-      const byLocale = new Map<string, PushToken[]>();
-      for (const token of userTokens) {
-        byLocale.set(token.locale, [
-          ...(byLocale.get(token.locale) ?? []),
-          token,
-        ]);
-      }
+      const byLocale = groupBy(userTokens, (token) => token.locale);
 
       for (const [locale, localeTokens] of byLocale) {
         const message = {
@@ -153,18 +159,25 @@ export class NotificationsService {
 
         sent += result.sent;
         failed += result.failed;
-
-        for (const invalid of result.invalidTokens) {
-          await this.deactivate(invalid);
-        }
+        // Collected rather than retired one at a time: a dead device is not
+        // urgent, and the sweep should not spend a write per stale token.
+        retired.push(...result.invalidTokens);
       }
     }
+
+    await this.deactivateAll(retired);
 
     this.logger.log(
       `Daily nudge: ${sent} notification(s)` +
         (failed > 0 ? `, ${failed} undelivered` : ''),
     );
     return sent;
+  }
+
+  private async usersById(userIds: number[]): Promise<Map<number, User>> {
+    if (userIds.length === 0) return new Map();
+    const rows = await this.users.find({ where: { id: In(userIds) } });
+    return new Map(rows.map((row) => [row.id, row]));
   }
 
   private async usersWhoPlayedToday(userIds: number[]): Promise<Set<number>> {
@@ -199,3 +212,19 @@ export class NotificationsService {
     return offsets;
   }
 }
+
+/**
+ * Buckets by key, pushing rather than rebuilding the array each time. The
+ * spread-into-a-new-array idiom this replaces is quadratic in bucket size,
+ * which on a sweep grouping every active token by user is not free.
+ */
+const groupBy = <T, K>(items: T[], keyOf: (item: T) => K): Map<K, T[]> => {
+  const grouped = new Map<K, T[]>();
+  for (const item of items) {
+    const key = keyOf(item);
+    const bucket = grouped.get(key);
+    if (bucket) bucket.push(item);
+    else grouped.set(key, [item]);
+  }
+  return grouped;
+};

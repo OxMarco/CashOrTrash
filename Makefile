@@ -33,9 +33,8 @@ pull: ## Pull updated images for the pinned tags
 build: ## Rebuild the app image
 	$(COMPOSE) build app
 
-# Back up before recreating. The app reconciles the schema from its entities on
-# boot, which can drop what it does not recognise, so the dump taken here is the
-# rollback point if a release has to be reversed.
+# Back up before recreating. Migrations never run backward automatically, so
+# this pair is the rollback point if a release has to be reversed.
 deploy: ## Pull, rebuild, back up, recreate changed services, smoke
 	git pull --ff-only
 	$(MAKE) build
@@ -43,7 +42,7 @@ deploy: ## Pull, rebuild, back up, recreate changed services, smoke
 	$(COMPOSE) up -d --remove-orphans
 	$(MAKE) smoke
 
-smoke: ## Check public readiness (database, Redis, queue, and catalogue)
+smoke: ## Check public readiness
 	@set -a; . ./.env; set +a; \
 	for attempt in $$(seq 1 40); do \
 		if curl --connect-timeout 3 --max-time 10 -fsS "https://$$DOMAIN/health/ready" >/dev/null 2>&1; then \
@@ -70,13 +69,17 @@ health: ## Show health status of each service
 db-backup: ## Take an immediate pg_dump into ./backups (on top of the daily one)
 	$(COMPOSE) run --rm --entrypoint /bin/sh db-backup /db-backup.sh once
 
-db-restore: ## Overwrite the live DB from a dump: make db-restore FILE=backups/<name>.dump
-	@test -n "$(FILE)" || { echo "usage: make db-restore FILE=backups/<name>.dump"; exit 1; }
+MEDIA ?= $(dir $(FILE))media-$(patsubst cashortrash-%.dump,%,$(notdir $(FILE))).tar.gz
+
+db-restore: ## Overwrite DB + media from a pair: make db-restore FILE=backups/<name>.dump
+	@test -n "$(FILE)" || { echo "usage: make db-restore FILE=backups/cashortrash-<timestamp>.dump"; exit 1; }
 	@test -f "$(FILE)" || { echo "$(FILE) not found"; exit 1; }
-	@printf 'This OVERWRITES the live database with %s. Type yes to continue: ' "$(FILE)"; \
+	@test -f "$(MEDIA)" || { echo "matching media archive $(MEDIA) not found"; exit 1; }
+	@printf 'This OVERWRITES the live database and media with %s. Type yes to continue: ' "$(FILE)"; \
 	read ans; [ "$$ans" = yes ] || { echo "aborted"; exit 1; }
 	$(COMPOSE) stop app
 	$(COMPOSE) exec -T postgres sh -c 'pg_restore -U $$POSTGRES_USER -d $$POSTGRES_DB --clean --if-exists --no-owner' < $(FILE)
+	$(COMPOSE) run --rm --no-deps -v ./backups:/restore:ro --entrypoint /bin/sh app -c 'find /var/lib/cashortrash/media -mindepth 1 -delete; tar -xzf /restore/$(notdir $(MEDIA)) -C /var/lib/cashortrash/media'
 	$(COMPOSE) start app
 	$(MAKE) smoke
 

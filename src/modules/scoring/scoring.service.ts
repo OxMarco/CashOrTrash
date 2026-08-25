@@ -168,10 +168,15 @@ export class ScoringService {
   }
 
   constantsFor(version: string): ScoringConstants {
-    const constants = SCORING_VERSIONS[version];
-    if (!constants) {
+    // `hasOwn` before the index, because the argument is a string that arrives
+    // from outside: this is the seam a re-scoring pass reaches through, and
+    // what it would hand over is `session_round.scoringVersion` read back from
+    // the database. A bare lookup resolves `toString` and `constructor` off
+    // the prototype and returns a *function* — truthy, so the guard below
+    // passes, and every constant then reads `undefined` and scores NaN.
+    if (!Object.hasOwn(SCORING_VERSIONS, version)) {
       throw new RangeError(`Unknown scoring version: ${version}`);
     }
-    return constants;
+    return SCORING_VERSIONS[version];
   }
 }

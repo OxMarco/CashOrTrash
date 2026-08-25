@@ -18,11 +18,16 @@ import { Public } from 'src/common/decorators/public.decorator';
 import { AppConfig, LegalConfig, LinksConfig } from 'src/config/configuration';
 
 /**
- * The Docker image compiles `src/` alone, so there `__dirname` is
- * `dist/modules/landing` and three levels up is the app root. A local
- * `nest build` also compiles `scripts/`, which pushes output down into
- * `dist/src/` and puts the root a level further away — hence two candidates,
- * tried in order.
+ * Two candidates, and which one resolves depends on whether this file is
+ * running from source or from the build.
+ *
+ * `tsconfig.build.json` pins `rootDir` to the package root, so every build —
+ * the Docker image included — lands the output at `dist/src/…`; the older
+ * `dist/modules/…` shape the two paths were originally written for no longer
+ * happens anywhere. What is left is still a real two-way split: under jest and
+ * ts-node `__dirname` is `src/modules/landing`, three levels below the repository
+ * root, while under `node dist/src/main.js` it is `dist/src/modules/landing`, four.
+ * Tried in order, so the source layout wins where both could exist.
  */
 export const LANDING_ASSET_PATHS = [
   join(__dirname, '..', '..', '..', 'assets', 'landing.html'),
@@ -227,14 +232,17 @@ export class LandingController {
   private async loadOgCard(): Promise<{ png: Buffer; etag: string } | null> {
     if (this.ogCardFile) return this.ogCardFile;
     for (const path of OG_CARD_PATHS) {
+      let png: Buffer;
       try {
-        const png = await readFile(path);
-        const etag = `"${createHash('sha256').update(png).digest('hex')}"`;
-        this.ogCardFile = { png, etag };
-        return this.ogCardFile;
-      } catch {
-        // Try the next layout.
+        png = await readFile(path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
+        throw error;
       }
+
+      const etag = `"${createHash('sha256').update(png).digest('hex')}"`;
+      this.ogCardFile = { png, etag };
+      return this.ogCardFile;
     }
     this.logger.error(
       `Could not read assets/og-card.png from any of: ${OG_CARD_PATHS.join(', ')}`,
@@ -351,18 +359,23 @@ export class LandingController {
   private async load(): Promise<{ html: Buffer; etag: string } | null> {
     if (this.page) return this.page;
     for (const path of LANDING_ASSET_PATHS) {
+      let source: string;
       try {
-        const source = await readFile(path, 'utf8');
-        const html = Buffer.from(this.withSocialCard(source), 'utf8');
-        // Hashed after injection, so the ETag describes the bytes actually
-        // sent. Hashing the file would let a change of origin serve stale
-        // metadata to every client still holding the old validator.
-        const etag = `"${createHash('sha256').update(html).digest('hex')}"`;
-        this.page = { html, etag };
-        return this.page;
-      } catch {
-        // Try the next layout.
+        source = await readFile(path, 'utf8');
+      } catch (error) {
+        // Only "not here" tries the next layout — a permission error or a bad
+        // mount is a deployment fault worth surfacing, not a layout difference.
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
+        throw error;
       }
+
+      const html = Buffer.from(this.withSocialCard(source), 'utf8');
+      // Hashed after injection, so the ETag describes the bytes actually sent.
+      // Hashing the file would let a change of origin serve stale metadata to
+      // every client still holding the old validator.
+      const etag = `"${createHash('sha256').update(html).digest('hex')}"`;
+      this.page = { html, etag };
+      return this.page;
     }
     this.logger.error(
       `Could not read assets/landing.html from any of: ${LANDING_ASSET_PATHS.join(', ')}`,

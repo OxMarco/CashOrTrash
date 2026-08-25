@@ -23,10 +23,10 @@ import { PLACEHOLDER_PHOTO_URL } from '../../src/modules/media/placeholder';
  * slider), and a generator makes those hold by construction instead of by
  * someone re-checking twenty literals. The prices are invented and mean nothing.
  *
- * Five of the themes are real categories, which is the floor `CatalogHealthIndicator`
- * enforces: `mystery-mix` is excluded there because it owns no items, so a
- * fixture of four real themes plus mystery leaves `/health/ready` permanently
- * red and `platform.e2e-spec` unable to assert a green probe.
+ * Five of the themes are real categories and `mystery-mix` owns no items of its
+ * own. That shape is what the draw specs assume; it is no longer load-bearing
+ * for `/health/ready`, which stopped reporting the catalogue — readiness covers
+ * the dependencies that stop a replica serving, and content is not one.
  */
 
 /** The slugs specs name directly. `mystery-mix` must be the mystery row. */

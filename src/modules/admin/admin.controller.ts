@@ -7,6 +7,7 @@ import {
   Param,
   ParseIntPipe,
   Patch,
+  PayloadTooLargeException,
   Post,
   Req,
   Res,
@@ -25,12 +26,24 @@ import { Public } from 'src/common/decorators/public.decorator';
 import { THEME_ICONS } from 'src/modules/catalog/theme-icons';
 import { AdminAuthService } from './admin-auth.service';
 import { AdminCatalogService } from './admin-catalog.service';
+import {
+  AdminLoginDto,
+  CreateCategoryDto,
+  SetActiveDto,
+} from './dto/admin.dto';
 import { AdminGuard, AdminPublic } from './admin.guard';
 
 /**
- * Two candidate paths, for the same reason the landing page has two: the Docker
- * image compiles `src/` alone and lands `dist/modules/admin`, while a local
- * `nest build` also compiles `scripts/` and pushes output a level deeper.
+ * Two candidates, and which one resolves depends on whether this file is
+ * running from source or from the build.
+ *
+ * `tsconfig.build.json` pins `rootDir` to the package root, so every build —
+ * the Docker image included — lands the output at `dist/src/…`; the older
+ * `dist/modules/…` shape the two paths were originally written for no longer
+ * happens anywhere. What is left is still a real two-way split: under jest and
+ * ts-node `__dirname` is `src/modules/admin`, three levels below the repository
+ * root, while under `node dist/src/main.js` it is `dist/src/modules/admin`, four.
+ * Tried in order, so the source layout wins where both could exist.
  */
 const assetPaths = (file: string) => [
   join(__dirname, '..', '..', '..', 'assets', file),
@@ -124,11 +137,10 @@ export class AdminController {
   @Post('api/session')
   @AdminPublic()
   async login(
-    @Body() body: { password?: unknown },
+    @Body() body: AdminLoginDto,
     @Req() request: FastifyRequest,
   ): Promise<{ token: string }> {
-    const password = typeof body?.password === 'string' ? body.password : '';
-    const token = await this.auth.login(password, request.ip ?? null);
+    const token = await this.auth.login(body.password, request.ip ?? null);
     return { token };
   }
 
@@ -145,22 +157,20 @@ export class AdminController {
   }
 
   @Post('api/categories')
-  async createCategory(
-    @Body() body: { name?: string; iconName?: string; sortOrder?: number },
-  ): Promise<unknown> {
+  async createCategory(@Body() body: CreateCategoryDto): Promise<unknown> {
     return this.catalogue.createCategory({
-      name: String(body?.name ?? ''),
-      iconName: body?.iconName,
-      sortOrder: Number(body?.sortOrder) || 0,
+      name: body.name,
+      iconName: body.iconName,
+      sortOrder: body.sortOrder ?? 0,
     });
   }
 
   @Patch('api/categories/:id')
   async toggleCategory(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { active?: boolean },
+    @Body() body: SetActiveDto,
   ): Promise<{ ok: true }> {
-    await this.catalogue.setCategoryActive(id, Boolean(body?.active));
+    await this.catalogue.setCategoryActive(id, body.active as boolean);
     return { ok: true };
   }
 
@@ -189,9 +199,9 @@ export class AdminController {
   @Patch('api/items/:id')
   async toggleItem(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { active?: boolean },
+    @Body() body: SetActiveDto,
   ): Promise<{ ok: true }> {
-    await this.catalogue.setItemActive(id, Boolean(body?.active));
+    await this.catalogue.setItemActive(id, body.active as boolean);
     return { ok: true };
   }
 
@@ -219,24 +229,49 @@ export class AdminController {
     const fields = new Map<string, string>();
     let photo: Buffer | null = null;
 
-    for await (const part of request.parts()) {
-      if (part.type === 'file') {
-        // Every part has to be drained even when it is not wanted, or the
-        // request stalls waiting for a consumer that never arrives.
-        const bytes = await part.toBuffer();
-        if (part.fieldname !== 'photo') continue;
-        // `limits.fileSize` truncates rather than throwing, so a file at
-        // exactly the ceiling is indistinguishable from one that was cut off.
-        // Refusing at the limit is the safe reading of an ambiguous result.
-        if (bytes.byteLength >= MAX_UPLOAD_BYTES) {
-          throw new BadRequestException(
-            `That photograph is larger than ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB.`,
-          );
+    try {
+      for await (const part of request.parts()) {
+        if (part.type === 'file') {
+          // Every part has to be drained even when it is not wanted, or the
+          // request stalls waiting for a consumer that never arrives.
+          const bytes = await part.toBuffer();
+          if (part.fieldname !== 'photo') continue;
+          if (photo) {
+            throw new BadRequestException('Upload exactly one photograph.');
+          }
+          // Strictly over, matching the `fileSize` limit handed to
+          // `@fastify/multipart`: a photograph of exactly the ceiling is one
+          // the plugin accepts, and rejecting it here would refuse an upload
+          // the configured limit permits.
+          if (bytes.byteLength > MAX_UPLOAD_BYTES || part.file.truncated) {
+            throw new PayloadTooLargeException(
+              `That photograph is larger than ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB.`,
+            );
+          }
+          photo = bytes;
+        } else if (typeof part.value === 'string') {
+          if (fields.has(part.fieldname)) {
+            throw new BadRequestException(
+              `Field "${part.fieldname}" was supplied more than once.`,
+            );
+          }
+          fields.set(part.fieldname, part.value);
         }
-        photo = bytes;
-      } else if (typeof part.value === 'string') {
-        fields.set(part.fieldname, part.value);
       }
+    } catch (error) {
+      const code =
+        error && typeof error === 'object' && 'code' in error
+          ? String(error.code)
+          : '';
+      if (
+        code === 'FST_REQ_FILE_TOO_LARGE' ||
+        code === 'FST_FILES_LIMIT' ||
+        code === 'FST_FIELDS_LIMIT' ||
+        code === 'FST_PARTS_LIMIT'
+      ) {
+        throw new PayloadTooLargeException('The upload exceeds its limits.');
+      }
+      throw error;
     }
 
     if (!photo || photo.byteLength === 0) {
@@ -252,12 +287,29 @@ export class AdminController {
       throw new BadRequestException('The price must be a positive amount.');
     }
 
+    const title = (fields.get('title') ?? '').trim();
+    const conditionLine = (fields.get('conditionLine') ?? '').trim();
+    const sourceUrl = (fields.get('sourceUrl') ?? '').trim();
+    if (title.length < 1 || title.length > 120) {
+      throw new BadRequestException(
+        'The item name must be between 1 and 120 characters.',
+      );
+    }
+    if (conditionLine.length > 160) {
+      throw new BadRequestException(
+        'The description must be at most 160 characters.',
+      );
+    }
+    if (sourceUrl.length > 512 || !isHttpUrl(sourceUrl)) {
+      throw new BadRequestException('The source must be an HTTP or HTTPS URL.');
+    }
+
     return {
       themeId,
-      title: fields.get('title') ?? '',
-      conditionLine: fields.get('conditionLine') ?? '',
+      title,
+      conditionLine,
       priceCents,
-      sourceUrl: fields.get('sourceUrl') ?? null,
+      sourceUrl: sourceUrl || null,
       photo,
     };
   }
@@ -282,30 +334,47 @@ export class AdminController {
     contentType: string,
   ): Promise<void> {
     for (const path of assetPaths(file)) {
+      let body: Buffer;
       try {
-        const body = await readFile(path);
-        void reply
-          .header('content-type', contentType)
-          // The global policy is `script-src 'none'`, which is right for an API
-          // whose only other HTML is static marketing copy and wrong for the one
-          // page here that has to run. Narrowed rather than widened globally:
-          // scripts and styles from this origin only, still no inline anything,
-          // and `img-src` opened just far enough to render item photographs
-          // when they are served from a separate media origin.
-          .header('content-security-policy', this.contentSecurityPolicy())
-          // The portal is an operator tool; no crawler should hold a copy of it
-          // and no proxy should serve a stale one after a deploy.
-          .header('cache-control', 'no-store')
-          .header('x-robots-tag', 'noindex, nofollow')
-          .send(body);
-        return;
-      } catch {
-        continue;
+        body = await readFile(path);
+      } catch (error) {
+        // Only "not here" moves on to the next candidate. A permission error or
+        // a bad mount is not the same thing as a layout difference between the
+        // Docker image and a local build, and swallowing it as one turns a
+        // fixable deployment fault into a bare 500 with nothing in the logs.
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
+        throw error;
       }
+
+      void reply
+        .header('content-type', contentType)
+        // The global policy is `script-src 'none'`, which is right for an API
+        // whose only other HTML is static marketing copy and wrong for the one
+        // page here that has to run. Narrowed rather than widened globally:
+        // scripts and styles from this origin only, still no inline anything,
+        // and `img-src` opened just far enough to render item photographs
+        // when they are served from a separate media origin.
+        .header('content-security-policy', this.contentSecurityPolicy())
+        // The portal is an operator tool; no crawler should hold a copy of it
+        // and no proxy should serve a stale one after a deploy.
+        .header('cache-control', 'no-store')
+        .header('x-robots-tag', 'noindex, nofollow')
+        .send(body);
+      return;
     }
     this.logger.error(`Admin asset ${file} is missing from the image`);
     void reply.status(500).send('The admin portal assets are not installed.');
   }
 }
+
+const isHttpUrl = (value: string): boolean => {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
 
 export { MAX_UPLOAD_BYTES };

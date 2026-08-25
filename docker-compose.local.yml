@@ -41,10 +41,6 @@ services:
       DATABASE_PASSWORD: cashortrash
       DATABASE_NAME: cashortrash
       DATABASE_SSL: 'false'
-      # The schema is built from the entities — the project is pre-launch and
-      # carries no migration chain. Turning this off gives a database that
-      # nothing will ever create or update.
-      DATABASE_SYNCHRONIZE: 'true'
       REDIS_HOST: redis
       REDIS_PORT: 6379
       # The host writes to ./.media; in here that same directory is mounted at

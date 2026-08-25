@@ -128,6 +128,39 @@ describe('the game loop', () => {
       expect(response.status).toBe(400);
     });
 
+    it('leaves exactly one active quick session after concurrent starts', async () => {
+      const player = await registerPlayer(api, 'loop-device-quick-concurrent');
+
+      const results = await Promise.all([
+        player.api.post('/v1/sessions', {
+          mode: 'quick',
+          themeSlug: 'everyday-stuff',
+        }),
+        player.api.post('/v1/sessions', {
+          mode: 'quick',
+          themeSlug: 'everyday-stuff',
+        }),
+        player.api.post('/v1/sessions', {
+          mode: 'quick',
+          themeSlug: 'everyday-stuff',
+        }),
+      ]);
+
+      for (const result of results) expect(result.status).toBe(201);
+
+      const [counts] = await ctx.dataSource.query<
+        Array<{ active: number; abandoned: number }>
+      >(
+        `SELECT
+           COUNT(*) FILTER (WHERE status = 'active')::int AS active,
+           COUNT(*) FILTER (WHERE status = 'abandoned')::int AS abandoned
+         FROM game_session
+         WHERE "userId" = $1 AND mode = 'quick'`,
+        [player.userId],
+      );
+      expect(counts).toEqual({ active: 1, abandoned: 2 });
+    });
+
     it('rejects an unknown mode with a validation error', async () => {
       const player = await registerPlayer(api, 'loop-device-0004');
 

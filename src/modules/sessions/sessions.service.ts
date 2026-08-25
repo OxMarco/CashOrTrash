@@ -168,36 +168,48 @@ export class SessionsService {
       throw new BadRequestException('themeSlug is required for a quick round');
     }
 
-    await this.enforceRoundBudget(userId);
+    const created = await this.dataSource.transaction(async (manager) => {
+      // A user row is the stable lock shared by every quick-session create,
+      // including when no active session exists yet. Serialising here makes
+      // "retire then insert" one per-player operation across every replica.
+      const player = await manager.getRepository(User).findOne({
+        where: { id: userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!player) throw new NotFoundException('Player not found');
 
-    const theme = await this.catalog.getThemeBySlug(themeSlug);
-    const itemIds = await this.catalog.drawItemIds(
-      theme.isMystery ? null : theme.id,
-      this.app.roundsPerSession,
-      // Quick rounds are explicitly *not* reproducible — a fresh seed each time.
-      `quick:${userId}:${randomUUID()}`,
-      // The reveal at the end of every round is an answer, and a quick round is
-      // the cheapest way to collect one. Hold back what a daily still needs to
-      // ask, and what this player has already been shown.
-      { reserveDaily: true, excludeSeenBy: userId },
-    );
+      // Count under the same lock, or a burst can have every request observe
+      // the last available budget slot before any of them records its session.
+      await this.enforceRoundBudget(userId, manager);
 
-    // Starting a new quick round retires the previous one rather than leaving
-    // orphaned "active" sessions behind.
-    await this.sessions.update(
-      { userId, mode: GameMode.QUICK, status: SessionStatus.ACTIVE },
-      { status: SessionStatus.ABANDONED },
-    );
+      const theme = await this.catalog.getThemeBySlug(themeSlug);
+      const itemIds = await this.catalog.drawItemIds(
+        theme.isMystery ? null : theme.id,
+        this.app.roundsPerSession,
+        // Quick rounds are explicitly *not* reproducible — a fresh seed each time.
+        `quick:${userId}:${randomUUID()}`,
+        // The reveal at the end of every round is an answer, and a quick round is
+        // the cheapest way to collect one. Hold back what a daily still needs to
+        // ask, and what this player has already been shown.
+        { reserveDaily: true, excludeSeenBy: userId },
+      );
 
-    const created = await this.sessions.save(
-      this.sessions.create({
-        id: randomUUID(),
-        userId,
-        mode: GameMode.QUICK,
-        themeId: theme.id,
-        itemIds,
-      }),
-    );
+      const sessionRepo = manager.getRepository(GameSession);
+      await sessionRepo.update(
+        { userId, mode: GameMode.QUICK, status: SessionStatus.ACTIVE },
+        { status: SessionStatus.ABANDONED },
+      );
+
+      return sessionRepo.save(
+        sessionRepo.create({
+          id: randomUUID(),
+          userId,
+          mode: GameMode.QUICK,
+          themeId: theme.id,
+          itemIds,
+        }),
+      );
+    });
 
     return this.toSessionDto(created, false);
   }
@@ -223,10 +235,14 @@ export class SessionsService {
    * session is retired, so a player who is over budget keeps the round they
    * were in the middle of and can still return to a match already under way.
    */
-  private async enforceRoundBudget(userId: number): Promise<void> {
+  private async enforceRoundBudget(
+    userId: number,
+    manager?: EntityManager,
+  ): Promise<void> {
     if (this.app.quickSessionsPerHour <= 0) return;
 
-    const recent = await this.sessions.count({
+    const sessions = manager?.getRepository(GameSession) ?? this.sessions;
+    const recent = await sessions.count({
       where: {
         userId,
         mode: In([GameMode.QUICK, GameMode.H2H]),
@@ -270,27 +286,43 @@ export class SessionsService {
       throw new GoneException('This challenge has expired');
     }
 
-    // Below the resume above, so rejoining a match in progress is always free
-    // and only a *new* five-item deal spends budget.
-    await this.enforceRoundBudget(userId);
-
     try {
-      const created = await this.sessions.save(
-        this.sessions.create({
-          id: randomUUID(),
-          userId,
-          mode: GameMode.H2H,
-          themeId: match.themeId,
-          matchId: match.id,
-          // Both players get the identical ordered set — "best of 5, same items".
-          itemIds: match.itemIds,
-        }),
-      );
+      // The same user-row lock `createQuick` takes, and for the same reason:
+      // counting the budget outside one lets a burst of five taps each observe
+      // the last free slot before any of them has recorded its session. The
+      // budget is per *reveal* and these two modes reveal identically, so the
+      // door they are counted through has to be equally hard to hold open.
+      //
+      // Below the resume above, so rejoining a match in progress is always free
+      // and only a *new* five-item deal spends budget.
+      const created = await this.dataSource.transaction(async (manager) => {
+        const player = await manager.getRepository(User).findOne({
+          where: { id: userId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!player) throw new NotFoundException('Player not found');
+
+        await this.enforceRoundBudget(userId, manager);
+
+        const sessionRepo = manager.getRepository(GameSession);
+        return sessionRepo.save(
+          sessionRepo.create({
+            id: randomUUID(),
+            userId,
+            mode: GameMode.H2H,
+            themeId: match.themeId,
+            matchId: match.id,
+            // Both players get the identical ordered set — "best of 5, same items".
+            itemIds: match.itemIds,
+          }),
+        );
+      });
       return this.toSessionDto(created, false);
     } catch (error) {
       if (!isPgError(error, PG_UNIQUE_VIOLATION)) throw error;
 
-      // A concurrent double-tap won the (userId, matchId) unique index.
+      // A concurrent double-tap won the (userId, matchId) unique index. Read
+      // outside the transaction above, which the violation has already aborted.
       const winner = await this.sessions.findOne({
         where: { userId, matchId: match.id },
       });
@@ -490,6 +522,11 @@ export class SessionsService {
       event: BetPlacedEvent;
       result: MatchReconciliation | null;
     }> = [];
+    // Read off the locked row below rather than re-fetched after the commit.
+    // Every reveal is built with `match: null` and filled in afterwards, so a
+    // post-commit lookup here would run on every bet in every mode — including
+    // the solo ones, which only ever learn that there was no match to fill in.
+    let matchId: string | null = null;
 
     const result = await this.dataSource.transaction(async (manager) => {
       const sessionRepo = manager.getRepository(GameSession);
@@ -503,6 +540,7 @@ export class SessionsService {
       if (session.userId !== userId) {
         throw new ForbiddenException('This is not your session');
       }
+      matchId = session.matchId;
       if (roundIndex < 0 || roundIndex >= session.itemIds.length) {
         throw new BadRequestException('No such round in this session');
       }
@@ -690,16 +728,13 @@ export class SessionsService {
       await this.events.emitAsync(SESSION_COMPLETED, event);
     }
 
-    if (result.match === null && result.round) {
-      // Head-to-head reveals carry the opponent block; solo ones do not.
-      const session = await this.sessions.findOne({ where: { id: sessionId } });
-      if (session?.matchId) {
-        result.match = await this.matches.opponentState(
-          session.matchId,
-          userId,
-          result.round.roundIndex,
-        );
-      }
+    // Head-to-head reveals carry the opponent block; solo ones do not.
+    if (matchId && result.match === null && result.round) {
+      result.match = await this.matches.opponentState(
+        matchId,
+        userId,
+        result.round.roundIndex,
+      );
     }
 
     return result;

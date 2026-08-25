@@ -27,11 +27,11 @@ const SERVER_ERROR: number = HttpStatus.INTERNAL_SERVER_ERROR;
  * Terminus reports a failed probe as a `ServiceUnavailableException` carrying a
  * `HealthCheckResult`: which dependencies are up, which are down, and the
  * details each indicator attached. That map is the entire point of readiness —
- * `CatalogHealthIndicator` goes out of its way to produce one rather than let a
- * driver error escape — and the generic object branch below would flatten it to
- * the bare title "Service Unavailable Exception", leaving a 503 that says
- * something is wrong but not what. Recognised here so the envelope stays
- * problem+json while the map survives.
+ * every indicator produces one rather than let a driver error escape — and the
+ * generic object branch below would flatten it to the bare title "Service
+ * Unavailable Exception", leaving a 503 that says something is wrong but not
+ * which dependency. Recognised here so the envelope stays problem+json while
+ * the map survives.
  */
 interface HealthCheckPayload {
   status: string;
@@ -61,18 +61,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     const problem = this.toProblem(exception, request?.url);
 
-    // A failed probe is a recognised report, not a fault: the body already
-    // names every indicator and its state. Logged at warn without the stack,
-    // because `make smoke` polls readiness forty times per deploy and an
-    // unseeded catalogue would otherwise write forty stack traces captioned
-    // "Unhandled exception" for a condition the deployment is expected to
-    // start in.
+    // An unhealthy probe is expected operational state, not an unhandled
+    // application exception. Keep it visible without emitting a misleading
+    // stack trace every time an orchestrator polls readiness.
     if (problem.checks) {
-      this.logger.warn({ path: problem.instance }, problem.title);
-    }
-    // 4xx are the client's problem and are already described in the body;
-    // only 5xx means something here is broken and wants a stack trace.
-    else if (problem.status >= SERVER_ERROR) {
+      this.logger.warn(
+        { path: problem.instance, checks: problem.checks },
+        problem.title,
+      );
+    } else if (problem.status >= SERVER_ERROR) {
       this.logger.error(
         { err: exception, path: problem.instance },
         'Unhandled exception',

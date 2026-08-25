@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import Redis, { ChainableCommander } from 'ioredis';
 import { EntityManager, In, LessThan, MoreThan, Repository } from 'typeorm';
@@ -17,6 +18,8 @@ import { DailyScore } from './entities/daily-score.entity';
 import { Friendship } from '../friends/entities/friendship.entity';
 import {
   DAILY_TTL_SECONDS,
+  boardReadyKey,
+  boardRebuildLockKey,
   dailyKey,
   FRIENDS_TTL_SECONDS,
   friendsKey,
@@ -27,6 +30,16 @@ import {
 
 /** How many ranked rows the board returns below the podium. */
 const ROWS_LIMIT = 50;
+const REBUILD_LOCK_MS = 10_000;
+const REBUILD_WAIT_MS = 100;
+/**
+ * Deliberately longer than `REBUILD_LOCK_MS`. A waiter that gave up inside the
+ * lease could time out in the same instant the lock it was waiting on expired,
+ * so the one case the wait exists for — a holder that died mid-rebuild — was
+ * also the case it could not survive. Waiting past the lease means the loop
+ * always gets at least one chance to take over from a dead holder.
+ */
+const REBUILD_WAIT_ATTEMPTS = 150;
 
 /**
  * Members are zero-padded user ids, which is what makes Redis's tie-breaking
@@ -179,14 +192,22 @@ export class LeaderboardService {
     // bet cannot double-count it.
     const weekTotal = await this.weeklyTotalFor(userId, date);
 
+    const wKey = weekKey(new Date(`${date}T00:00:00.000Z`));
     const transaction = this.redis
       .multi()
       .zadd(dKey, score, member)
       .expire(dKey, DAILY_TTL_SECONDS)
-      .zadd(weekKey(new Date(`${date}T00:00:00.000Z`)), weekTotal, member)
-      .expire(weekKey(new Date(`${date}T00:00:00.000Z`)), WEEK_TTL_SECONDS);
+      .zadd(wKey, weekTotal, member)
+      .expire(wKey, WEEK_TTL_SECONDS);
 
     await execRedisTransaction(transaction, 'leaderboard score mirror');
+    await execRedisTransaction(
+      this.redis
+        .multi()
+        .set(boardReadyKey(dKey), '1', 'EX', DAILY_TTL_SECONDS)
+        .set(boardReadyKey(wKey), '1', 'EX', WEEK_TTL_SECONDS),
+      'leaderboard ready markers',
+    );
   }
 
   private async weeklyTotalFor(userId: number, date: string): Promise<number> {
@@ -222,6 +243,21 @@ export class LeaderboardService {
 
   private async rankOfScore(key: string, score: string): Promise<number> {
     return (await this.redis.zcount(key, `(${score}`, '+inf')) + 1;
+  }
+
+  /**
+   * Percent of the *other* players on `key` this score beats, given a board
+   * size the caller already knows. The same arithmetic `toStanding` does, for
+   * callers holding the score and the total and needing only this one number.
+   */
+  private async percentileOn(
+    key: string,
+    score: string,
+    total: number,
+  ): Promise<number> {
+    if (total <= 1) return 100;
+    const beaten = await this.redis.zcount(key, '-inf', `(${score}`);
+    return Math.round((beaten / (total - 1)) * 100);
   }
 
   /**
@@ -344,27 +380,35 @@ export class LeaderboardService {
 
     const rows = top.map((entry) => this.toRow(entry, profiles, userId));
 
-    const myRank =
+    // All three read the board this call has already resolved. Going back
+    // through `getPercentile` here would re-enter `resolveKey`, which on the
+    // friends scope is not a spare round trip but a second full rebuild of the
+    // intersection — the friendship query and the whole DEL/ZADD/EXPIRE
+    // pipeline, run twice to answer one request.
+    const [myRank, tiedAtTop, percentile] = await Promise.all([
       myRankZeroBased === null || myScoreRaw === null
-        ? null
-        : await this.rankOfScore(key, myScoreRaw);
+        ? Promise.resolve(null)
+        : this.rankOfScore(key, myScoreRaw),
+      // How many share the top place. Read off the ZSET rather than off `top`,
+      // which is capped at ROWS_LIMIT and would undercount a wide tie.
+      top.length > 0
+        ? this.redis.zcount(key, top[0].score, top[0].score)
+        : Promise.resolve(0),
+      myScoreRaw === null
+        ? Promise.resolve(null)
+        : this.percentileOn(key, myScoreRaw, totalPlayers),
+    ]);
+
     const delta =
       scope === LeaderboardScopeParam.TODAY
         ? await this.rankDelta(userId, todayUtc(now), myRank)
         : null;
 
-    // How many share the top place. Read off the ZSET rather than off `top`,
-    // which is capped at ROWS_LIMIT and would undercount a wide tie.
-    const tiedAtTop =
-      top.length > 0
-        ? await this.redis.zcount(key, top[0].score, top[0].score)
-        : 0;
-
     const me = toDto(LeaderboardMeDto, {
       rank: myRank,
       score: myScoreRaw === null ? 0 : Number.parseInt(myScoreRaw, 10),
       delta,
-      percentile: await this.getPercentile(scope, userId, now),
+      percentile,
     });
 
     return toDto(LeaderboardResponseDto, {
@@ -430,13 +474,76 @@ export class LeaderboardService {
 
     const key = scope === 'week' ? weekKey(now) : dailyKey(todayUtc(now));
 
-    // Redis is a cache: an empty key after a flush is a repair job, not a
-    // "nobody has played today".
-    if ((await this.redis.exists(key)) === 0) {
-      await this.rebuild(scope === 'week' ? 'week' : 'today', now);
-    }
+    // Redis does not retain an empty ZSET. A separate marker distinguishes a
+    // legitimate empty board from a cache flush, and a short lease prevents a
+    // burst of first reads from all rebuilding the same board from Postgres.
+    await this.ensureBoardReady(scope === 'week' ? 'week' : 'today', now, key);
 
     return key;
+  }
+
+  private async ensureBoardReady(
+    scope: 'today' | 'week',
+    now: Date,
+    key: string,
+  ): Promise<void> {
+    const readyKey = boardReadyKey(key);
+    const deadline = Date.now() + REBUILD_WAIT_ATTEMPTS * REBUILD_WAIT_MS;
+
+    for (;;) {
+      if ((await this.redis.exists(readyKey)) > 0) return;
+      if (await this.rebuildUnderLease(scope, now, key, readyKey)) return;
+      if (Date.now() >= deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, REBUILD_WAIT_MS));
+    }
+
+    // Every attempt lost the lease, repeatedly, for longer than one rebuild can
+    // hold it. Serve the key as it stands rather than fail the read: this is a
+    // cache with an authoritative table behind it, the next request will try
+    // again, and the hourly repair job is the backstop. A 500 here would turn a
+    // contended cache miss into a broken leaderboard screen.
+    this.logger.warn(
+      `Timed out waiting for a leaderboard rebuild of ${key}; ` +
+        'serving the board as it stands',
+    );
+  }
+
+  /**
+   * Rebuilds `key` if this call wins the lease, and reports whether the board
+   * is ready on return. False means somebody else holds it — the caller waits
+   * and asks again.
+   */
+  private async rebuildUnderLease(
+    scope: 'today' | 'week',
+    now: Date,
+    key: string,
+    readyKey: string,
+  ): Promise<boolean> {
+    const lockKey = boardRebuildLockKey(key);
+    const token = randomUUID();
+    const acquired = await this.redis.set(
+      lockKey,
+      token,
+      'PX',
+      REBUILD_LOCK_MS,
+      'NX',
+    );
+    if (acquired !== 'OK') return false;
+
+    try {
+      // The marker may have appeared between EXISTS and SET.
+      if ((await this.redis.exists(readyKey)) === 0) {
+        await this.rebuild(scope, now);
+      }
+      return true;
+    } finally {
+      await this.redis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        1,
+        lockKey,
+        token,
+      );
+    }
   }
 
   /**
@@ -498,6 +605,7 @@ export class LeaderboardService {
     }
     pipeline.expire(key, ttl);
     await execRedisTransaction(pipeline, `leaderboard rebuild ${key}`);
+    await this.redis.set(boardReadyKey(key), '1', 'EX', ttl);
 
     this.logger.log(`Rebuilt ${key} from ${totals.length} rows`);
     return totals.length;

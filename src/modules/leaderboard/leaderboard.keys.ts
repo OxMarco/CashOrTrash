@@ -15,6 +15,14 @@ export const weekKey = (date: Date = new Date()): string =>
 /** Ephemeral: built per request from Friendship, then dropped. */
 export const friendsKey = (userId: number): string => `lb:friends:${userId}`;
 
+/** Exists even when the corresponding sorted set has zero members. */
+export const boardReadyKey = (boardKey: string): string =>
+  `leaderboard-ready:${boardKey}`;
+
+/** Short lease that collapses concurrent cache-miss rebuilds. */
+export const boardRebuildLockKey = (boardKey: string): string =>
+  `leaderboard-rebuild-lock:${boardKey}`;
+
 /** Daily keys outlive the day so "yesterday" stays queryable during rollover. */
 export const DAILY_TTL_SECONDS = 60 * 60 * 24 * 3;
 export const WEEK_TTL_SECONDS = 60 * 60 * 24 * 14;

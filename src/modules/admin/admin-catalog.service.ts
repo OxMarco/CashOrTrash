@@ -15,7 +15,10 @@ import { MediaConfig } from 'src/config/configuration';
 import { CatalogService } from 'src/modules/catalog/catalog.service';
 import { Item, ItemOrigin } from 'src/modules/catalog/entities/item.entity';
 import { Theme } from 'src/modules/catalog/entities/theme.entity';
-import { MIN_IMPORT_PRICE_CENTS } from 'src/modules/catalog/slider';
+import {
+  MAX_IMPORT_PRICE_CENTS,
+  MIN_IMPORT_PRICE_CENTS,
+} from 'src/modules/catalog/slider';
 import {
   DEFAULT_THEME_ICON,
   THEME_ICONS,
@@ -45,16 +48,17 @@ export interface ItemInput {
 /**
  * What is wrong with a price, or null if nothing is.
  *
- * A floor and only a floor: nothing caps how expensive an item may be, because
- * nothing about an expensive one is harder to price — the catalogue already
- * runs to eight figures and the slider is drawn in log space precisely so it
- * scales.
+ * Neither bound is a taste call, and neither is about how hard the object is to
+ * price — the catalogue runs to eight figures and the slider is drawn in log
+ * space precisely so it scales. Both are the points at which `deriveSlider`
+ * stops being able to frame the answer at all.
  *
- * The floor is not a taste call. Below `MIN_IMPORT_PRICE_CENTS` the slider's
- * flat floor outranks its proportional one, the left end lands on or above the
- * answer, and the item deals an unplayable round every time it comes up; that
- * constant is derived from exactly that crossover. Zero and negatives fall out
- * of the same comparison, so there is no separate positivity check.
+ * Below `MIN_IMPORT_PRICE_CENTS` the slider's flat floor outranks its
+ * proportional one and the left end lands on or above the answer. At or above
+ * `MAX_IMPORT_PRICE_CENTS` the int32 clamp on the top bound lands it on or
+ * below the answer. Either way the item deals a round no bet can win, silently,
+ * every time it comes up. Zero and negatives fall out of the same comparison as
+ * the floor, so there is no separate positivity check.
  *
  * Exported for its own spec, like `slugify` — it is the one rule in here worth
  * pinning without standing a whole service up behind it. The file-tree import
@@ -67,6 +71,12 @@ export function rejectPrice(priceCents: number): string | null {
   }
   if (priceCents < MIN_IMPORT_PRICE_CENTS) {
     return `The cheapest item a round can be built around is $${MIN_IMPORT_PRICE_CENTS / 100}.`;
+  }
+  if (priceCents >= MAX_IMPORT_PRICE_CENTS) {
+    return (
+      'The dearest item a round can be built around is under $' +
+      `${(MAX_IMPORT_PRICE_CENTS / 100).toLocaleString('en-US')}.`
+    );
   }
   return null;
 }
@@ -286,15 +296,20 @@ export class AdminCatalogService {
   }
 
   private async pendingByTheme(): Promise<Map<number, number>> {
-    const rows = await this.items.find({
-      where: { copyPending: true },
-      select: { themeId: true },
-    });
-    const counts = new Map<number, number>();
-    for (const row of rows) {
-      counts.set(row.themeId, (counts.get(row.themeId) ?? 0) + 1);
-    }
-    return counts;
+    // Counted in the database rather than by pulling every outstanding row
+    // across the wire to length them in JS — the answer is one integer per
+    // category either way.
+    const rows = await this.items
+      .createQueryBuilder('i')
+      .select('i.themeId', 'themeId')
+      .addSelect('COUNT(*)', 'count')
+      .where('i.copyPending = true')
+      .groupBy('i.themeId')
+      .getRawMany<{ themeId: number; count: string }>();
+
+    return new Map(
+      rows.map((row) => [Number(row.themeId), Number.parseInt(row.count, 10)]),
+    );
   }
 }
 

@@ -2,6 +2,7 @@ import { PricingService } from 'src/modules/scoring/pricing.service';
 import {
   deriveSlider,
   FLOOR_MIN_CENTS,
+  MAX_IMPORT_PRICE_CENTS,
   MIN_IMPORT_PRICE_CENTS,
   MIN_SLIDER_STOPS,
   sliderSeed,
@@ -77,6 +78,24 @@ describe('deriveSlider', () => {
     expect(
       deriveSlider(2_000_000_000, 'huge').sliderMaxCents,
     ).toBeLessThanOrEqual(2_147_483_647);
+  });
+
+  // The pair the import ceiling is derived from, and the assertion this file
+  // was missing: the int32 clamp is applied *after* the guard that frames the
+  // answer, so it can undo it. Asserting only that the bound fits in an int32
+  // passed happily while every draw at $20M came back unwinnable.
+  it('frames rather than strands the answer just below the import ceiling', () => {
+    const dearest = MAX_IMPORT_PRICE_CENTS - 1;
+
+    for (let i = 0; i < 200; i += 1) {
+      const { sliderMinCents, sliderMaxCents } = deriveSlider(
+        dearest,
+        `dear${i}`,
+      );
+      expect(sliderMinCents).toBeLessThan(dearest);
+      expect(sliderMaxCents).toBeGreaterThan(dearest);
+      expect(sliderMaxCents).toBeLessThanOrEqual(2_147_483_647);
+    }
   });
 
   /**

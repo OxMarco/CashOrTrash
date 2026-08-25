@@ -10,6 +10,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import KeyvRedis from '@keyv/redis';
 import Redis from 'ioredis';
 import { LoggerModule } from 'nestjs-pino';
+import { join } from 'node:path';
 
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { UserThrottlerGuard } from './common/guards/user-throttler.guard';
@@ -97,9 +98,9 @@ import { buildBullRedisOptions, RedisModule } from './redis/redis.module';
           database: db.database,
           ssl: db.ssl ? { rejectUnauthorized: false } : false,
           autoLoadEntities: true,
-          // The only way the schema is built. See `DatabaseConfig.synchronize`
-          // for why there is no migration chain behind it.
-          synchronize: db.synchronize,
+          synchronize: false,
+          migrationsRun: true,
+          migrations: [join(__dirname, 'database', 'migrations', '*.{js,ts}')],
         };
       },
     }),

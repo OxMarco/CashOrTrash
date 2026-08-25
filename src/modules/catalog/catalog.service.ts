@@ -27,6 +27,18 @@ const MS_PER_DAY = 86_400_000;
 const MIN_SAMPLE_FOR_LABEL = 25;
 
 /**
+ * How far back the difficulty label looks.
+ *
+ * Unbounded, this aggregate re-read every round ever played, every hour,
+ * forever — a cost that only ever grows and that buys a worse number as it
+ * goes: "Avg ±22%" is meant to tell a player how hard this category is *now*,
+ * and a year of history is mostly a record of a catalogue that has since
+ * changed. A quarter is long enough to clear `MIN_SAMPLE_FOR_LABEL` on a quiet
+ * category and short enough that the answer still describes the present.
+ */
+const THEME_STATS_WINDOW_DAYS = 90;
+
+/**
  * An item's prose in the language a request asked for.
  *
  * Resolved through this rather than read off the item directly, so that the
@@ -342,38 +354,67 @@ export class CatalogService {
   }
 
   /**
-   * Recomputed hourly. Uses the absolute centre error across scored rounds,
-   * which is what the "Avg ±22%" label means to a player.
+   * Recomputed hourly. Uses the absolute centre error across rounds scored
+   * inside `THEME_STATS_WINDOW_DAYS`, which is what the "Avg ±22%" label means
+   * to a player.
    */
   async recomputeThemeStats(): Promise<number> {
-    const rows = await this.items.query(`
-      SELECT i."themeId"        AS "themeId",
+    const since = new Date(Date.now() - THEME_STATS_WINDOW_DAYS * MS_PER_DAY);
+
+    const rows = await this.items.query<
+      Array<{ themeId: number; avgErrorPct: string; sampleSize: string }>
+    >(
+      `
+      SELECT i."themeId"            AS "themeId",
              AVG(ABS(r."errorPct")) AS "avgErrorPct",
-             COUNT(*)           AS "sampleSize"
+             COUNT(*)               AS "sampleSize"
       FROM session_round r
       JOIN item i ON i.id = r."itemId"
+      WHERE r."placedAt" >= $1::timestamptz
       GROUP BY i."themeId"
-    `);
+      `,
+      [since.toISOString()],
+    );
 
-    for (const row of rows as Array<{
-      themeId: number;
-      avgErrorPct: string;
-      sampleSize: string;
-    }>) {
+    const stats = rows.map((row) => ({
+      themeId: Number(row.themeId),
+      avgErrorPct: Number.parseFloat(row.avgErrorPct) || 0,
+      sampleSize: Number.parseInt(row.sampleSize, 10),
+    }));
+
+    // One statement rather than one per theme: the loop this replaces issued a
+    // round trip per category on every tick of an hourly job.
+    if (stats.length > 0) {
       await this.stats
         .createQueryBuilder()
         .insert()
         .into(ThemeStat)
-        .values({
-          themeId: Number(row.themeId),
-          avgErrorPct: Number.parseFloat(row.avgErrorPct) || 0,
-          sampleSize: Number.parseInt(row.sampleSize, 10),
-        })
+        .values(stats)
         .orUpdate(['avgErrorPct', 'sampleSize', 'updatedAt'], ['themeId'])
         .execute();
     }
 
+    // A bounded window means a category can stop having rounds in it, and its
+    // last row would otherwise sit there being served as a current difficulty
+    // forever. Dropped rather than zeroed, so `difficultyLabel` reads it as the
+    // absence it is and the card shows no tag.
+    await this.dropStatsOutside(stats.map((stat) => stat.themeId));
+
     await this.invalidateThemes();
-    return (rows as unknown[]).length;
+    return stats.length;
+  }
+
+  private async dropStatsOutside(themeIds: number[]): Promise<void> {
+    const query = this.stats.createQueryBuilder().delete().from(ThemeStat);
+    // An explicit predicate on both branches. `repository.delete({})` refuses
+    // empty criteria outright, and a bare unfiltered delete is worth reading as
+    // deliberate: no category has been played inside the window, so no category
+    // has a difficulty to report.
+    if (themeIds.length > 0) {
+      query.where('"themeId" NOT IN (:...themeIds)', { themeIds });
+    } else {
+      query.where('1 = 1');
+    }
+    await query.execute();
   }
 }

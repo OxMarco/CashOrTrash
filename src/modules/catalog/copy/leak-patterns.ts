@@ -158,7 +158,12 @@ const PATTERNS: Record<LeakLocale, readonly Pattern[]> = {
 };
 
 export function hasLeakPatterns(locale: string): locale is LeakLocale {
-  return locale in PATTERNS;
+  // `hasOwn`, not `in`: `in` walks the prototype, so `'toString'` and
+  // `'constructor'` would satisfy a guard whose entire job is to refuse a
+  // language nothing can check — and the caller would then iterate a function
+  // as if it were a pattern list. No real subtag collides today; this is a
+  // guard for the commit where the locale list stops being hand-written.
+  return Object.hasOwn(PATTERNS, locale);
 }
 
 /**

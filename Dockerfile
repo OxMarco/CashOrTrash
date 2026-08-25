@@ -39,6 +39,14 @@ COPY --chown=node:node assets ./assets
 # build, not the queue.
 RUN node -e "require('sharp')"
 
+# The media volume mounts here. Created in the image and owned by `node`,
+# because Docker seeds an empty named volume from the image's directory —
+# ownership included. Without it Docker creates the mountpoint root-owned, the
+# app (which runs as `node`) cannot write, and the failure is quiet in the worst
+# way: `PlaceholderSeeder` logs and continues, so every photo-less item 404s its
+# image, and every upload through /admin fails with EACCES.
+RUN mkdir -p /var/lib/cashortrash/media && chown node:node /var/lib/cashortrash/media
+
 USER node
 EXPOSE 3000
 

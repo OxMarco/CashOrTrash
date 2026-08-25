@@ -6,6 +6,7 @@ import 'tsconfig-paths/register';
 import { DataSource } from 'typeorm';
 import { join } from 'node:path';
 
+import { hashAdminPassword } from '../../src/modules/admin/admin-password';
 import { installCatalogue } from './catalogue-fixture';
 import { applyEnv, startStack } from './containers';
 
@@ -19,6 +20,11 @@ export default async function globalSetup(): Promise<void> {
   const startedAt = Date.now();
   const stack = await startStack();
   applyEnv(stack);
+  process.env.ADMIN_PASSWORD_HASH = await hashAdminPassword(
+    'test-admin-password',
+  );
+  process.env.ADMIN_JWT_SECRET =
+    'test-admin-jwt-secret-that-is-longer-than-thirty-two-characters';
 
   // Built here rather than imported from `src/database/data-source`: that
   // module snapshots the environment at import time, and we have only just
@@ -31,14 +37,16 @@ export default async function globalSetup(): Promise<void> {
     password: stack.postgres.getPassword(),
     database: stack.postgres.getDatabase(),
     entities: [join(__dirname, '..', '..', 'src', '**', '*.entity.{ts,js}')],
-    // Built from the entities, exactly as every other database in this project
-    // is — there are no migrations to run instead.
-    synchronize: true,
+    migrations: [
+      join(__dirname, '..', '..', 'src', 'database', 'migrations', '*.{ts,js}'),
+    ],
+    migrationsRun: true,
+    synchronize: false,
   });
 
   await dataSource.initialize();
   try {
-    // The one index entity metadata cannot express. SchemaExtras reapplies it
+    // The one index entity metadata cannot express. SchemaExtras verifies it
     // when the app boots, but the fixture below runs before any app exists.
     await dataSource.query(
       `CREATE UNIQUE INDEX IF NOT EXISTS "uq_theme_single_active_mystery"

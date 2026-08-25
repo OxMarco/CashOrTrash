@@ -20,14 +20,19 @@ export const PLACEHOLDER_DIGEST =
 export const PLACEHOLDER_PHOTO_URL = `/media/items/${PLACEHOLDER_DIGEST}.webp`;
 
 /**
- * Two candidates, for the same reason the landing page and the admin portal
- * have two: a build that compiles `src/` alone lands `dist/modules/media`, and
- * three levels up is the app root, while a build that also compiles `scripts/`
- * pushes output down into `dist/src/` and puts the root a level further away.
- * The Docker image is the second shape — `CMD` runs `dist/src/main.js` — so a
- * single three-level path resolves to `dist/assets`, which does not exist, and
- * every item without a photograph 404s its image.
+ * Two candidates, and which one resolves depends on whether this file is
+ * running from source or from the build.
+ *
+ * `tsconfig.build.json` pins `rootDir` to the package root, so every build —
+ * the Docker image included — lands the output at `dist/src/…`; the older
+ * `dist/modules/…` shape the two paths were originally written for no longer
+ * happens anywhere. What is left is still a real two-way split: under jest and
+ * ts-node `__dirname` is `src/modules/media`, three levels below the repository
+ * root, while under `node dist/src/main.js` it is `dist/src/modules/media`, four.
+ * Tried in order, so the source layout wins where both could exist.
  */
+// `placeholder.spec.ts` reads `[0]` directly, which is the source-layout path
+// and the one that resolves under jest.
 export const PLACEHOLDER_ASSET_PATHS = [
   join(__dirname, '..', '..', '..', 'assets', 'photo-pending.webp'),
   join(__dirname, '..', '..', '..', '..', 'assets', 'photo-pending.webp'),
@@ -80,8 +85,9 @@ export class PlaceholderSeeder implements OnApplicationBootstrap {
     for (const path of PLACEHOLDER_ASSET_PATHS) {
       try {
         return await readFile(path);
-      } catch {
-        // Try the next layout.
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
+        throw error;
       }
     }
     throw new Error(

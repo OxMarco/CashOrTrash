@@ -92,7 +92,9 @@ export class ItemCopyService {
     // because `taken` is what stops the model naming two watches identically.
     const byTheme = new Map<number, Item[]>();
     for (const item of queued) {
-      byTheme.set(item.themeId, [...(byTheme.get(item.themeId) ?? []), item]);
+      const group = byTheme.get(item.themeId);
+      if (group) group.push(item);
+      else byTheme.set(item.themeId, [item]);
     }
 
     const translatable: TranslatableItem[] = [];

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Expose } from 'class-transformer';
+import { Expose, Type } from 'class-transformer';
 import { IsString, Length } from 'class-validator';
 
 import { MatchStatus } from '../entities/match.entity';
@@ -71,12 +71,19 @@ export class MatchDto {
   @Expose()
   roundCount: number;
 
+  // `@Type` explicitly, like every other nested DTO in the API. These two were
+  // the only ones leaning on `emitDecoratorMetadata` to supply `design:type`,
+  // which works today and stops working silently under any compiler that does
+  // not emit it — SWC, esbuild, TS 5 standard decorators. The failure mode is
+  // the serializer's usual one: the block turns into `{}` rather than erroring.
   @ApiProperty({ type: MatchPlayerDto })
   @Expose()
+  @Type(() => MatchPlayerDto)
   host: MatchPlayerDto;
 
   @ApiProperty({ type: MatchPlayerDto, nullable: true })
   @Expose()
+  @Type(() => MatchPlayerDto)
   guest: MatchPlayerDto | null;
 
   @ApiProperty({

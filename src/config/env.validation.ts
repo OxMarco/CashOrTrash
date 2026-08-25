@@ -20,13 +20,10 @@ export const envValidationSchema = Joi.object({
   DATABASE_PASSWORD: Joi.string().allow('').default('cashortrash'),
   DATABASE_NAME: Joi.string().default('cashortrash'),
   DATABASE_SSL: Joi.boolean().default(false),
-  // Entity-driven sync in every environment, because there is no longer a
-  // migration chain to be the alternative. This used to be forced off in
-  // production and paired with `migrationsRun`; with the chain gone that pairing
-  // would boot production against an empty schema, which is a worse failure
-  // than the one the clamp existed to prevent. See `databaseConfig.synchronize`
-  // for what this costs and what to restore before the first real deploy.
-  DATABASE_SYNCHRONIZE: Joi.boolean().default(true),
+  // Schema changes are migrations in every environment. Refuse the old switch
+  // explicitly so a stale deployment file cannot silently turn destructive
+  // entity synchronization back on.
+  DATABASE_SYNCHRONIZE: Joi.forbidden(),
 
   REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().port().default(6379),
@@ -53,6 +50,12 @@ export const envValidationSchema = Joi.object({
     otherwise: Joi.string().allow('').optional(),
   }),
   OPENAI_MODEL: Joi.string().default('gpt-5.4'),
+  // Two minutes is generous for a batch of eight items and far short of the
+  // SDK's ten-minute default, which is long enough to hold the copy pass's
+  // advisory lock across a whole maintenance window. Capped at the default the
+  // bound exists to replace.
+  OPENAI_TIMEOUT_MS: Joi.number().min(1_000).max(600_000).default(120_000),
+  OPENAI_MAX_RETRIES: Joi.number().integer().min(0).max(5).default(2),
 
   // --- admin portal ---------------------------------------------------------
   // An scrypt hash as `<salt-hex>:<key-hex>`; `npm run admin:hash` prints one.

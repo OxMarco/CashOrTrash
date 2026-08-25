@@ -51,8 +51,11 @@ describe('platform surface', () => {
       expect(response.status).toBe(200);
       expect(response.body.status).toBe('ok');
       expect(Object.keys(response.body.info)).toEqual(
-        expect.arrayContaining(['database', 'redis', 'queue', 'catalogue']),
+        expect.arrayContaining(['database', 'redis', 'queue']),
       );
+      // Readiness reports what stops this replica serving. Content does not:
+      // an empty catalogue still answers every route.
+      expect(Object.keys(response.body.info)).not.toContain('catalogue');
     });
 
     it('leaves the probes outside the version prefix and the auth guard', async () => {

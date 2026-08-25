@@ -105,7 +105,13 @@ export async function configureApp(
   // re-encodes it to the 1080x864 card — generous enough for a camera original
   // and far below anything that would threaten the decode memory limit.
   await app.register(fastifyMultipart, {
-    limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 12 },
+    limits: {
+      fileSize: MAX_UPLOAD_BYTES,
+      fieldSize: 2048,
+      files: 1,
+      fields: 12,
+      parts: 13,
+    },
   });
 
   // For the app's web target only — native clients never preflight. Its

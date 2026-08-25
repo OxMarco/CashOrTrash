@@ -97,6 +97,25 @@ export const MIN_SLIDER_STOPS = 20;
  */
 export const MIN_IMPORT_PRICE_CENTS = FLOOR_MIN_CENTS / FLOOR_RATIO;
 
+/**
+ * The dearest object that can carry a readable slider. The mirror of the floor
+ * above, and derived the same way rather than chosen.
+ *
+ * `sliderMaxCents` travels as an `int`, so `deriveSlider` clamps it to the
+ * largest nice step that fits — `niceRound(INT32_MAX, 'down')`, which is
+ * exactly $20,000,000. That clamp is applied last, so on an item priced at or
+ * above it the clamp lands the top of the slider *on or below the answer* and
+ * quietly undoes the guard that had just framed it: every bet is then clamped
+ * into bounds that cannot contain the price, and the round is unwinnable for
+ * everyone, every time, with nothing in the logs to say so.
+ *
+ * There is no rescue available inside the column: above this there is no nice
+ * int32 number left to put above the answer. So, exactly as at the floor, this
+ * is where the catalogue stops accepting items — see `rejectPrice`. Exclusive,
+ * because the clamp has to leave room *above* the price, not land on it.
+ */
+export const MAX_IMPORT_PRICE_CENTS = niceRound(INT32_MAX, 'down');
+
 export interface SliderBounds {
   sliderMinCents: number;
   sliderMaxCents: number;
@@ -148,8 +167,9 @@ export function deriveSlider(
   // position first pins span near 1.7x on two rounds in three; drawing span
   // first does the same thing to position, which is the worse of the two
   // because position is what a fixed-anchor guess exploits. Alternating means
-  // each axis gets its full range on about half the items and neither is
-  // systematically compressed.
+  // each axis gets its full range on a good share of the items and neither is
+  // systematically compressed; the split leans to position for the same reason
+  // it is the one named above.
   const positionFirst = rng.next() < 0.6;
 
   const drawPosition = (max: number) =>
@@ -185,6 +205,9 @@ export function deriveSlider(
   // that used to guard the stored columns can no longer do for us.
   if (min >= truePriceCents) min = niceRound(truePriceCents / 2, 'down');
   if (max <= truePriceCents) max = niceRound(truePriceCents * 2, 'up');
+  // Last, and therefore able to undo the guard above — which is safe only
+  // because `MAX_IMPORT_PRICE_CENTS` keeps prices this clamp could strand out
+  // of the catalogue in the first place.
   if (max > INT32_MAX) max = niceRound(INT32_MAX, 'down');
 
   return { sliderMinCents: Math.round(min), sliderMaxCents: Math.round(max) };

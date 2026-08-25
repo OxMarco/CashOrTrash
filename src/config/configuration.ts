@@ -25,7 +25,17 @@ export const appConfig = registerAs('app', () => ({
    */
   publicOrigin: (process.env.PUBLIC_ORIGIN ?? '').replace(/\/+$/, ''),
   roundsPerSession: int(process.env.ROUNDS_PER_SESSION, 5),
-  minRoundSeconds: int(process.env.MIN_ROUND_SECONDS, 0),
+  /**
+   * The dwell floor: the least time a round may be held before a bet on it is
+   * accepted. On at one second, which costs a human nothing and costs a script
+   * the only advantage it has. 0 disables it.
+   *
+   * The fallback here must agree with the Joi default — Joi validates first and
+   * writes its defaults into `process.env`, so it wins and a disagreeing
+   * fallback is dead code that silently becomes live if the schema default is
+   * ever removed. This one said 0 while the schema said 1.
+   */
+  minRoundSeconds: int(process.env.MIN_ROUND_SECONDS, 1),
   /**
    * How long a player has to bet, from the moment the round is dealt. The clock
    * is the server's — it starts when `/current` stamps the row and is checked
@@ -145,25 +155,6 @@ export const databaseConfig = registerAs('database', () => ({
   password: process.env.DATABASE_PASSWORD ?? 'cashortrash',
   database: process.env.DATABASE_NAME ?? 'cashortrash',
   ssl: bool(process.env.DATABASE_SSL, false),
-  /**
-   * Local development can reconcile entities automatically for fast iteration.
-   * There is no migration chain behind this any more — it was removed while the
-   * project is pre-launch, on the grounds that a schema nobody has shipped has
-   * nothing to migrate *from*, and keeping a chain honest costs a migration per
-   * entity change for no benefit yet.
-   *
-   * The cost is real and worth writing down rather than discovering: synchronize
-   * reconciles the database to the entities and will drop a column, an index or
-   * a constraint it cannot account for, taking the data with it. That is
-   * survivable against a database that can be rebuilt and is not survivable
-   * against one with users in it. Anything synchronize cannot express lives in
-   * `SchemaExtras`, which reapplies it on every boot.
-   *
-   * Before the first real deploy this wants reversing: an initial migration
-   * generated from the entities, `migrationsRun` restored, and production
-   * pinned back to `false`.
-   */
-  synchronize: bool(process.env.DATABASE_SYNCHRONIZE, true),
 }));
 
 export const redisConfig = registerAs('redis', () => ({
@@ -184,6 +175,19 @@ export const copywritingConfig = registerAs('copywriting', () => ({
   // that matters.
   openaiApiKey: process.env.OPENAI_API_KEY || undefined,
   openaiModel: process.env.OPENAI_MODEL ?? 'gpt-5.4',
+  /**
+   * How long one copy request may take, and how many times it may be retried.
+   *
+   * Bounded for the same reason the currency and push clients are, and it
+   * matters more here than in either: the copy pass runs behind a Postgres
+   * advisory lock and occupies a queue worker for its whole duration, so a
+   * provider that hangs does not merely delay some prose — it holds the lock
+   * that stops the other replica from picking the work up. The SDK's own
+   * defaults are ten minutes and two retries, which on a full batch of twelve
+   * requests is most of a day.
+   */
+  openaiTimeoutMs: int(process.env.OPENAI_TIMEOUT_MS, 120_000),
+  openaiMaxRetries: int(process.env.OPENAI_MAX_RETRIES, 2),
 }));
 
 export const adminConfig = registerAs('admin', () => ({
@@ -229,8 +233,15 @@ export const mediaConfig = registerAs('media', () => ({
   // spec would then leave behind as untracked files.
   root: process.env.MEDIA_ROOT ?? '/var/lib/cashortrash/media',
   // Empty means same-origin: `photoUrl` stays a root-relative path and the API
-  // serves the bytes itself. Set this to a CDN origin to move the traffic off
-  // the app without rewriting a single stored row.
+  // serves the bytes itself. Set this to a CDN origin to move new item traffic
+  // off the app.
+  //
+  // It applies from the moment it is set, not retroactively: `photoUrl` is
+  // built with this prefix when the item is created and stored as written, so
+  // items already in the catalogue keep whatever base they were imported under.
+  // Nothing breaks — a root-relative path is still served by this API — but
+  // moving the existing catalogue to a CDN is a backfill of the column, not a
+  // change of this variable.
   publicBase: process.env.MEDIA_PUBLIC_BASE || undefined,
 }));
 

@@ -305,6 +305,20 @@ describe('ScoringService', () => {
     it('resolves a known scoring version', () => {
       expect(service.constantsFor('v1')).toBe(SCORING_V1);
     });
+
+    /**
+     * The version is a string from outside — a re-scoring pass reads it off
+     * `session_round.scoringVersion` — so the lookup must not walk the
+     * prototype. A bare index returns `Object.prototype.toString` here: a
+     * function, which is truthy, so a falsy check waves it through and every
+     * constant then reads `undefined` and scores NaN.
+     */
+    it.each(['toString', 'constructor', 'valueOf', '__proto__'])(
+      'rejects %p, which is a prototype key and not a version',
+      (version) => {
+        expect(() => service.constantsFor(version)).toThrow(RangeError);
+      },
+    );
   });
 
   describe('result invariants', () => {

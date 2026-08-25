@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { Cache } from 'cache-manager';
 import { DataSource, Repository } from 'typeorm';
 
 import { GameSession } from '../sessions/entities/game-session.entity';
@@ -14,6 +15,11 @@ describe('UsersService leaderboard eligibility', () => {
   const users = { findOne: jest.fn() } as unknown as Repository<User>;
   const usernames = {} as UsernameService;
   const dataSource = {} as DataSource;
+  const cache = {
+    get: jest.fn().mockResolvedValue(undefined),
+    set: jest.fn().mockResolvedValue(undefined),
+    del: jest.fn().mockResolvedValue(undefined),
+  } as unknown as Cache;
 
   beforeEach(() => jest.clearAllMocks());
 
@@ -76,6 +82,7 @@ describe('UsersService leaderboard eligibility', () => {
       currency,
       usernames,
       dataSource,
+      cache,
       config,
     );
   }

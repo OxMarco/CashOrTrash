@@ -2,13 +2,16 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "src/main.ts",
+    // Both are invoked by TypeORM through CLI/glob configuration.
+    "src/database/data-source.ts",
+    "src/database/migrations/*.ts",
     // Loaded by TypeORM from the configured glob rather than a TS import.
     "scripts/*.{ts,mjs}",
     "test/**/*.e2e-spec.ts",
     "test/support/global-{setup,teardown}.ts",
     // Unit specs are entry points, not project files: several exist only to
     // exercise a provider that nothing else imports directly.
-    "src/**/*.spec.ts"
+    "src/**/*.spec.ts",
   ],
   "project": ["src/**/*.ts", "scripts/**/*.{ts,mjs}", "test/**/*.ts"],
   // Neither is imported, and both are load-bearing. `@fastify/cors` is what
@@ -25,6 +28,6 @@
     "exports": "off",
     "types": "off",
     "enumMembers": "off",
-    "duplicates": "off"
-  }
+    "duplicates": "off",
+  },
 }

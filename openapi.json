@@ -931,7 +931,7 @@
             }
           }
         },
-        "summary": "Readiness probe — database, Redis, queue and playable catalogue.",
+        "summary": "Readiness probe — database, Redis and queue.",
         "tags": [
           "health"
         ]

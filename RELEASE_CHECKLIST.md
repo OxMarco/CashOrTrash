@@ -9,10 +9,10 @@ a deployment pass; supply the real release inputs instead.
   `ADMIN_JWT_SECRET`. Production refuses to boot without both. Confirm `/admin`
   is reachable, that a wrong password is refused, and that the attempt budget
   bites after ten failures from one address.
-- [ ] Fill the catalogue through `/admin`: at least five categories holding a
-  full round each, or `/health/ready` stays red. Before uploading a photograph,
-  satisfy yourself you have the right to publish it — nothing in the pipeline
-  checks that any more, and every image ships inside a store binary's reach.
+- [ ] If the release includes catalogue content, upload it through `/admin`.
+  An empty catalogue is supported and does not affect readiness. Before
+  uploading a photograph, satisfy yourself you have the right to publish it —
+  nothing in the pipeline checks that, and every image is publicly reachable.
 - [ ] Replace every example value in the production `.env`, including `DOMAIN`,
   `SUPPORT_EMAIL`, `ACME_EMAIL`, the database password, three independent auth
   and game secrets, and `OPENAI_API_KEY`.
@@ -23,6 +23,9 @@ a deployment pass; supply the real release inputs instead.
   stack so TLS issuance can succeed.
 - [ ] Put an external uptime alert on `https://<domain>/health/ready`; container
   auto-healing is not an alert and cannot report a dead host.
+- [ ] Set `RESTIC_REPOSITORY` to storage outside the production host and set a
+  unique `RESTIC_PASSWORD` plus the backend credentials. Keep a recovery copy
+  of that password outside the host; without it, Restic snapshots are unusable.
 
 ## Release candidate
 
@@ -42,9 +45,7 @@ a deployment pass; supply the real release inputs instead.
 
 - [ ] Run `make deploy`, then confirm `make health` shows the API, database,
   Redis, local backup, and off-site backup services healthy.
-- [ ] Confirm `/health/ready` reports the catalogue and queue healthy. It needs
-  five categories each holding a full round; a category short of one is not
-  playable and does not count.
+- [ ] Confirm `/health/ready` reports the database, Redis and queue healthy.
 - [ ] Upload one item and confirm the copy job replaces its typed-in text with
   written prose in English, Spanish, Portuguese and Italian within a minute, and
   that no description mentions the price.

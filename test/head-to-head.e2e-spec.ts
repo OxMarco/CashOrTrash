@@ -417,6 +417,69 @@ describe('head-to-head across replicas', () => {
       expect(['disconnected', 'refused']).toContain(outcome);
     });
 
+    it('refuses tokens for players that no longer exist', async () => {
+      const deleted = await registerPlayer(
+        replicaA.api,
+        'h2h-deleted-socket-player',
+      );
+      await replicaA.dataSource.query('DELETE FROM "user" WHERE id = $1', [
+        deleted.userId,
+      ]);
+
+      const socket = io(`${replicaA.baseUrl}/matches`, {
+        auth: { token: deleted.accessToken },
+        transports: ['websocket'],
+        forceNew: true,
+      });
+      sockets.push(socket);
+
+      const outcome = await new Promise<string>((resolve) => {
+        const timer = setTimeout(() => resolve('still connected'), 5_000);
+        const settle = (result: string) => {
+          clearTimeout(timer);
+          resolve(result);
+        };
+        socket.once('disconnect', () => settle('disconnected'));
+        socket.once('connect_error', () => settle('refused'));
+      });
+
+      expect(['disconnected', 'refused']).toContain(outcome);
+    });
+
+    it('caps one player across replicas at five live sockets', async () => {
+      const player = await registerPlayer(
+        replicaA.api,
+        'h2h-connection-budget-player',
+      );
+      for (const baseUrl of [
+        replicaA.baseUrl,
+        replicaB.baseUrl,
+        replicaA.baseUrl,
+        replicaB.baseUrl,
+        replicaA.baseUrl,
+      ]) {
+        await openSocket(baseUrl, player.accessToken);
+      }
+
+      const extra = io(`${replicaB.baseUrl}/matches`, {
+        auth: { token: player.accessToken },
+        transports: ['websocket'],
+        forceNew: true,
+      });
+      sockets.push(extra);
+      const outcome = await new Promise<string>((resolve) => {
+        const timer = setTimeout(() => resolve('still connected'), 5_000);
+        const settle = (result: string) => {
+          clearTimeout(timer);
+          resolve(result);
+        };
+        extra.once('disconnect', () => settle('disconnected'));
+        extra.once('connect_error', () => settle('refused'));
+      });
+
+      expect(['disconnected', 'refused']).toContain(outcome);
+    });
+
     it('does not let an authenticated non-player join a match room', async () => {
       const host = await registerPlayer(
         replicaA.api,

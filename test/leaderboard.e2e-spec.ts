@@ -1,5 +1,9 @@
 import { addDays, todayUtc } from '../src/common/utils/date.util';
-import { dailyKey, weekKey } from '../src/modules/leaderboard/leaderboard.keys';
+import {
+  boardReadyKey,
+  dailyKey,
+  weekKey,
+} from '../src/modules/leaderboard/leaderboard.keys';
 import { LeaderboardService } from '../src/modules/leaderboard/leaderboard.service';
 import { Api } from './support/api-client';
 import { playDaily, registerPlayer } from './support/players';
@@ -317,6 +321,26 @@ describe('leaderboard', () => {
       expect(response.status).toBe(200);
       expect(response.body.totalPlayers).toBe(2);
       expect(response.body.me.rank).not.toBeNull();
+    });
+
+    it('marks an empty board ready and collapses concurrent rebuilds', async () => {
+      const lurker = await registerPlayer(api, 'lb-empty-board', 'emptyboard');
+      await ctx.redis.flushdb();
+      const repository = (leaderboard as any).dailyScores;
+      const querySpy = jest.spyOn(repository, 'createQueryBuilder');
+
+      const ranks = await Promise.all(
+        Array.from({ length: 12 }, () =>
+          leaderboard.getRank('today', lurker.userId),
+        ),
+      );
+
+      expect(ranks).toEqual(Array(12).fill(null));
+      expect(querySpy).toHaveBeenCalledTimes(1);
+      expect(await ctx.redis.exists(boardReadyKey(dailyKey(todayUtc())))).toBe(
+        1,
+      );
+      querySpy.mockRestore();
     });
 
     it('surfaces command-level Redis transaction errors', async () => {

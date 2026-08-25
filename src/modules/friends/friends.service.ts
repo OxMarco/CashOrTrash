@@ -13,6 +13,22 @@ import { UsersService } from '../users/users.service';
 import { FriendDto, FriendListDto } from './dto/friend.dto';
 import { Friendship } from './entities/friendship.entity';
 
+/**
+ * The most friends one account may hold.
+ *
+ * Not a product opinion so much as the bound that makes the two readers safe.
+ * Nothing paginates a friend list: `list` fetches every edge and then every
+ * profile behind it, and `buildFriendsKey` turns the same list into a ZMSCORE
+ * with one argument per friend followed by a pipeline of one ZADD per friend —
+ * rebuilt on *every* friends-leaderboard request, because the board is derived
+ * rather than maintained. Uncapped, one account adding all night makes both of
+ * those unbounded, and the Redis one is unbounded per request.
+ *
+ * Five hundred is far past what the feature is for — a friends board is people
+ * you know — and far short of where either fan-out is a problem.
+ */
+export const MAX_FRIENDS = 500;
+
 @Injectable()
 export class FriendsService {
   constructor(
@@ -49,6 +65,18 @@ export class FriendsService {
       throw new BadRequestException('You cannot add yourself');
     }
 
+    // Answered before the cap is consulted, which is what keeps a retried tap
+    // idempotent at the cap: an existing friendship is already counted, so
+    // checking the ceiling first would start refusing the retry that the
+    // `orIgnore` below exists to absorb. It also makes the common repeat case
+    // the cheaper path rather than the more expensive one.
+    const existing = await this.friendships.findOne({
+      where: { userId, friendUserId: target.id },
+    });
+    if (existing) return this.toFriendDto(target, existing.createdAt);
+
+    await this.enforceFriendLimit(userId, target.id);
+
     // One statement, so the pair can never end up half-written; `orIgnore`
     // makes re-adding an existing friend a no-op rather than a 409, which is
     // what the client wants when a tap is retried on a flaky connection.
@@ -68,6 +96,44 @@ export class FriendsService {
     });
 
     return this.toFriendDto(target, edge.createdAt);
+  }
+
+  /**
+   * Both sides, because the write is both sides.
+   *
+   * Adding a friend puts an edge on the other player's list too, and they never
+   * agreed to it — there is no request/accept step. So capping only the caller
+   * would bound nothing: a thousand accounts each adding the same victim once
+   * would hand that victim a thousand-edge list they cannot refuse, and it is
+   * their list that then gets rebuilt into Redis on every board they open.
+   *
+   * A soft cap, deliberately. Two concurrent adds can both read a count one
+   * below the ceiling and both commit, so the true bound is "about
+   * `MAX_FRIENDS`" rather than exactly it. Serialising this would mean locking
+   * two user rows on a social action to defend a limit that exists to keep a
+   * fan-out proportionate, and being a handful over does not threaten that.
+   */
+  private async enforceFriendLimit(
+    userId: number,
+    targetUserId: number,
+  ): Promise<void> {
+    const [mine, theirs] = await Promise.all([
+      this.friendships.count({ where: { userId } }),
+      this.friendships.count({ where: { userId: targetUserId } }),
+    ]);
+
+    if (mine >= MAX_FRIENDS) {
+      throw new BadRequestException(
+        `You can have at most ${MAX_FRIENDS} friends — remove one to add another`,
+      );
+    }
+    if (theirs >= MAX_FRIENDS) {
+      // Says whose limit it is without saying anything the 404 above has not
+      // already confirmed about that account existing.
+      throw new BadRequestException(
+        'That player already has as many friends as they can hold',
+      );
+    }
   }
 
   async remove(userId: number, friendUserId: number): Promise<void> {
