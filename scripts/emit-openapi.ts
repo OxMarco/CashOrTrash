@@ -21,6 +21,9 @@
  * error, just a contract describing almost nothing, which is the worst of the
  * available outcomes. Hence `npm run openapi:emit` building first.
  */
+// Must precede every other import: see the comment in that file.
+import './emit-openapi.env';
+
 import { NestFactory } from '@nestjs/core';
 import {
   FastifyAdapter,
