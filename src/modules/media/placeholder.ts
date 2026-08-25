@@ -19,15 +19,19 @@ export const PLACEHOLDER_DIGEST =
 
 export const PLACEHOLDER_PHOTO_URL = `/media/items/${PLACEHOLDER_DIGEST}.webp`;
 
-/** Resolves under both `dist/modules/media` and `src/modules/media`. */
-export const PLACEHOLDER_ASSET_PATH = join(
-  __dirname,
-  '..',
-  '..',
-  '..',
-  'assets',
-  'photo-pending.webp',
-);
+/**
+ * Two candidates, for the same reason the landing page and the admin portal
+ * have two: a build that compiles `src/` alone lands `dist/modules/media`, and
+ * three levels up is the app root, while a build that also compiles `scripts/`
+ * pushes output down into `dist/src/` and puts the root a level further away.
+ * The Docker image is the second shape — `CMD` runs `dist/src/main.js` — so a
+ * single three-level path resolves to `dist/assets`, which does not exist, and
+ * every item without a photograph 404s its image.
+ */
+export const PLACEHOLDER_ASSET_PATHS = [
+  join(__dirname, '..', '..', '..', 'assets', 'photo-pending.webp'),
+  join(__dirname, '..', '..', '..', '..', 'assets', 'photo-pending.webp'),
+];
 
 /**
  * Copies the placeholder into the media store on boot, if it is not already
@@ -52,7 +56,7 @@ export class PlaceholderSeeder implements OnApplicationBootstrap {
     try {
       if (await this.store.has(PLACEHOLDER_DIGEST)) return;
 
-      const bytes = await readFile(PLACEHOLDER_ASSET_PATH);
+      const bytes = await this.readAsset();
       const actual = digestOf(bytes);
 
       if (actual !== PLACEHOLDER_DIGEST) {
@@ -70,5 +74,18 @@ export class PlaceholderSeeder implements OnApplicationBootstrap {
         `Could not install the placeholder item photo: ${(error as Error).message}`,
       );
     }
+  }
+
+  private async readAsset(): Promise<Buffer> {
+    for (const path of PLACEHOLDER_ASSET_PATHS) {
+      try {
+        return await readFile(path);
+      } catch {
+        // Try the next layout.
+      }
+    }
+    throw new Error(
+      `assets/photo-pending.webp not found at any of: ${PLACEHOLDER_ASSET_PATHS.join(', ')}`,
+    );
   }
 }

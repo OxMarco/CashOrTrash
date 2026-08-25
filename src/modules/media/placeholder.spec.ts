@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import { digestOf } from './image-processor.service';
 import {
-  PLACEHOLDER_ASSET_PATH,
+  PLACEHOLDER_ASSET_PATHS,
   PLACEHOLDER_DIGEST,
   PLACEHOLDER_PHOTO_URL,
 } from './placeholder';
@@ -15,7 +15,7 @@ describe('the placeholder item photo', () => {
     // `npm run assets:placeholder` and updating PLACEHOLDER_DIGEST — which
     // would 404 the photo on every item still on the placeholder. Failing here
     // is the cheap version of finding that out.
-    const bytes = await readFile(PLACEHOLDER_ASSET_PATH);
+    const bytes = await readFile(PLACEHOLDER_ASSET_PATHS[0]);
 
     expect(digestOf(bytes)).toBe(PLACEHOLDER_DIGEST);
   });

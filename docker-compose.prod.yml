@@ -367,4 +367,10 @@ volumes:
 
 networks:
   backend:
+    # Pinned, because `--providers.docker.network=backend` above is matched
+    # against the *actual* network name. Without this compose would prefix it
+    # to `cashortrash-backend_backend`, Traefik would fail the lookup, warn,
+    # and fall back to the container's first network — correct today only
+    # because each routed container is on exactly one.
+    name: backend
     driver: bridge
