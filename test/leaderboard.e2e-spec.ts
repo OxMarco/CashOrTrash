@@ -4,6 +4,7 @@ import {
   dailyKey,
   weekKey,
 } from '../src/modules/leaderboard/leaderboard.keys';
+import { LeaderboardCacheService } from '../src/modules/leaderboard/leaderboard-cache.service';
 import { LeaderboardService } from '../src/modules/leaderboard/leaderboard.service';
 import { Api } from './support/api-client';
 import { playDaily, registerPlayer } from './support/players';
@@ -23,11 +24,13 @@ describe('leaderboard', () => {
   let ctx: TestApp;
   let api: Api;
   let leaderboard: LeaderboardService;
+  let cache: LeaderboardCacheService;
 
   beforeAll(async () => {
     ctx = await createTestApp();
     api = ctx.api;
     leaderboard = ctx.app.get(LeaderboardService);
+    cache = ctx.app.get(LeaderboardCacheService);
   });
 
   beforeEach(async () => {
@@ -306,6 +309,32 @@ describe('leaderboard', () => {
       expect(await ctx.redis.zcard(weekKey())).toBe(3);
     });
 
+    it('removes members that no longer exist in Postgres', async () => {
+      const players = await playField(['stalea', 'staleb']);
+      const removed = players[1];
+      const date = todayUtc();
+
+      await ctx.dataSource.query(
+        'DELETE FROM daily_score WHERE "userId" = $1 AND "challengeDate" = $2',
+        [removed.userId, date],
+      );
+      expect(await ctx.redis.zcard(dailyKey(date))).toBe(2);
+
+      await leaderboard.rebuild('today');
+
+      expect(await ctx.redis.zcard(dailyKey(date))).toBe(1);
+      expect(await leaderboard.getRank('today', removed.userId)).toBeNull();
+
+      // A completion listener queued before the delete may still wake later.
+      // Its mirror re-reads PostgreSQL and must not resurrect the old member.
+      await (
+        leaderboard as unknown as {
+          syncToRedis(userId: number, challengeDate: string): Promise<void>;
+        }
+      ).syncToRedis(removed.userId, date);
+      expect(await leaderboard.getRank('today', removed.userId)).toBeNull();
+    });
+
     /**
      * A read after a flush must not simply report an empty board — the player
      * would see their score vanish. `resolveKey` rebuilds a missing key
@@ -326,8 +355,11 @@ describe('leaderboard', () => {
     it('marks an empty board ready and collapses concurrent rebuilds', async () => {
       const lurker = await registerPlayer(api, 'lb-empty-board', 'emptyboard');
       await ctx.redis.flushdb();
-      const repository = (leaderboard as any).dailyScores;
-      const querySpy = jest.spyOn(repository, 'createQueryBuilder');
+      // Spied on the cache service, not on LeaderboardService. The read path is
+      // getRank -> cache.resolveKey -> ensureBoardReady -> cache.rebuild, so it
+      // never passes through LeaderboardService.rebuild — a spy there would sit
+      // at zero and the collapse this test exists to prove would go unchecked.
+      const rebuildSpy = jest.spyOn(cache, 'rebuild');
 
       const ranks = await Promise.all(
         Array.from({ length: 12 }, () =>
@@ -336,22 +368,21 @@ describe('leaderboard', () => {
       );
 
       expect(ranks).toEqual(Array(12).fill(null));
-      expect(querySpy).toHaveBeenCalledTimes(1);
+      expect(rebuildSpy).toHaveBeenCalledTimes(1);
       expect(await ctx.redis.exists(boardReadyKey(dailyKey(todayUtc())))).toBe(
         1,
       );
-      querySpy.mockRestore();
+      rebuildSpy.mockRestore();
     });
 
-    it('surfaces command-level Redis transaction errors', async () => {
+    it('atomically replaces a corrupt serving key', async () => {
       await playField(['wrongtype']);
       const key = dailyKey(todayUtc());
       await ctx.redis.set(key, 'not-a-sorted-set');
 
-      await expect(leaderboard.rebuild('today')).rejects.toThrow('WRONGTYPE');
-
-      await ctx.redis.del(key);
-      await leaderboard.rebuild('today');
+      await expect(leaderboard.rebuild('today')).resolves.toBe(1);
+      expect(await ctx.redis.type(key)).toBe('zset');
+      expect(await ctx.redis.zcard(key)).toBe(1);
     });
   });
 

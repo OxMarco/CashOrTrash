@@ -32,15 +32,15 @@ export class CurrencyService {
   }
 
   /** USD cents into the minor units of `currency`. */
-  fromUsdCents(usdCents: number, currency: Currency): number {
+  fromUsdCents(usdCents: number, currency: Currency, rate?: number): number {
     if (currency === 'USD') return usdCents;
-    return Math.round(usdCents * this.rateFor(currency));
+    return Math.round(usdCents * (rate ?? this.rateFor(currency)));
   }
 
   /** Minor units of `currency` back into USD cents. */
-  toUsdCents(minorUnits: number, currency: Currency): number {
+  toUsdCents(minorUnits: number, currency: Currency, rate?: number): number {
     if (currency === 'USD') return minorUnits;
-    return Math.round(minorUnits / this.rateFor(currency));
+    return Math.round(minorUnits / (rate ?? this.rateFor(currency)));
   }
 
   /** What `GET /currencies` answers: the set a client may pick from, and at what rate. */

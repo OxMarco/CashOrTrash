@@ -12,6 +12,7 @@ import {
 import { Theme } from '../../catalog/entities/theme.entity';
 import { Match } from '../../matches/entities/match.entity';
 import { User } from '../../users/entities/user.entity';
+import { Currency } from '../../currency/currency.constants';
 
 export enum GameMode {
   DAILY = 'daily',
@@ -47,6 +48,16 @@ export enum SessionStatus {
   'ck_game_session_completion',
   `("status" = 'complete' AND "currentIndex" = cardinality("itemIds") AND "completedAt" IS NOT NULL) OR
    ("status" <> 'complete' AND "completedAt" IS NULL)`,
+)
+@Check(
+  'ck_game_session_slider_bounds',
+  `("sliderMinCents" IS NULL) = ("sliderMaxCents" IS NULL) AND
+   ("sliderMinCents" IS NULL OR (cardinality("sliderMinCents") = cardinality("itemIds") AND cardinality("sliderMaxCents") = cardinality("itemIds")))`,
+)
+@Check(
+  'ck_game_session_current_quote',
+  `("currentCurrency" IS NULL) = ("currentExchangeRate" IS NULL) AND
+   ("currentExchangeRate" IS NULL OR "currentExchangeRate" > 0)`,
 )
 /**
  * One daily attempt per player per day, enforced in the schema rather than in
@@ -105,6 +116,17 @@ export class GameSession {
   @Column({ type: 'int', array: true })
   itemIds: number[];
 
+  /** Immutable slider geometry, aligned with itemIds. Null only on legacy rows. */
+  @Column({ type: 'int', array: true, nullable: true })
+  sliderMinCents: number[] | null;
+
+  @Column({ type: 'int', array: true, nullable: true })
+  sliderMaxCents: number[] | null;
+
+  /** Scoring rules shared by every round in this session. */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  scoringVersion: string | null;
+
   /** Index of the next unplayed round. Equals itemIds.length when complete. */
   @Column({ type: 'int', default: 0 })
   currentIndex: number;
@@ -127,4 +149,11 @@ export class GameSession {
    */
   @Column({ type: 'timestamptz', nullable: true })
   currentServedAt: Date | null;
+
+  /** Currency quote pinned when the current round is first served. */
+  @Column({ type: 'varchar', length: 3, nullable: true })
+  currentCurrency: Currency | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  currentExchangeRate: number | null;
 }

@@ -27,6 +27,8 @@ export const JOBS = {
    * the pending set the size of the genuinely open invites.
    */
   MATCH_INVITE_EXPIRE: 'match-invite-expire',
+  /** Deletes old content-addressed photos no catalogue row references. */
+  MEDIA_ORPHAN_SWEEP: 'media-orphan-sweep',
   /**
    * Not scheduled — enqueued by the admin portal when an item is uploaded, so
    * it is absent from `JOB_SCHEDULES`. New catalogue content is an event and
@@ -63,4 +65,5 @@ export const JOB_SCHEDULES: Array<{ name: JobName; pattern: string }> = [
   { name: JOBS.REGISTRATION_IP_PRUNE, pattern: '30 2 * * *' },
   // Alongside it, in the same quiet hour.
   { name: JOBS.MATCH_INVITE_EXPIRE, pattern: '45 2 * * *' },
+  { name: JOBS.MEDIA_ORPHAN_SWEEP, pattern: '15 2 * * *' },
 ];

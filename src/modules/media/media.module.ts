@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { Item } from '../catalog/entities/item.entity';
 import { ImageProcessor } from './image-processor.service';
+import { MediaGcService } from './media-gc.service';
 import { MediaController } from './media.controller';
 import { LocalMediaStore, MediaStore } from './media-store';
 import { PlaceholderSeeder } from './placeholder';
@@ -18,12 +21,14 @@ import { PlaceholderSeeder } from './placeholder';
  * `NotificationsModule`.
  */
 @Module({
+  imports: [TypeOrmModule.forFeature([Item])],
   controllers: [MediaController],
   providers: [
     { provide: MediaStore, useClass: LocalMediaStore },
     ImageProcessor,
+    MediaGcService,
     PlaceholderSeeder,
   ],
-  exports: [MediaStore, ImageProcessor],
+  exports: [MediaStore, ImageProcessor, MediaGcService],
 })
 export class MediaModule {}

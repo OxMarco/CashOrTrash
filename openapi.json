@@ -276,7 +276,7 @@
     },
     "/v1/sessions/{id}/current": {
       "get": {
-        "description": "Amounts come back in `?currency`, dollars by default. Bet in the same one: the slider grid differs per currency, and a bet snapped to the euro grid is not on the dollar one. The title and description come back in `?lang`, English by default and English wherever an item has no copy in the language asked for.",
+        "description": "Amounts come back in `?currency`, dollars by default. Bet in the same one: the slider grid differs per currency, and a bet snapped to the euro grid is not on the dollar one. Passing `?currency` deals the round in it and holds that quote for the rest of the round; omitting the parameter leaves an already-dealt round in the currency it was dealt in, so read `currency` off the response rather than assuming the one asked for. The title and description come back in `?lang`, English by default and English wherever an item has no copy in the language asked for.",
         "operationId": "SessionsController_current",
         "parameters": [
           {
@@ -960,23 +960,21 @@
         "properties": {
           "deviceId": {
             "type": "string",
-            "description": "Client-generated, stable per install. Re-posting the same id returns the\nsame player, which is what makes a reinstall-free app relaunch seamless.",
             "minLength": 8,
             "maxLength": 128,
             "pattern": "^[A-Za-z0-9._:-]+$",
+            "description": "Client-generated, stable per install. Re-posting the same id returns the\nsame player, which is what makes a reinstall-free app relaunch seamless.",
             "example": "6f1c0a3e-8b6e-4a2f-9a9a-1c2d3e4f5a6b"
           }
         },
         "required": [
           "deviceId"
-        ]
+        ],
+        "additionalProperties": false
       },
       "AccessTokenDto": {
         "type": "object",
         "properties": {
-          "accessToken": {
-            "type": "string"
-          },
           "expiresIn": {
             "type": "number",
             "description": "Access token lifetime in seconds."
@@ -989,13 +987,16 @@
             "type": "string",
             "nullable": true,
             "description": "Null until the name is claimed."
+          },
+          "accessToken": {
+            "type": "string"
           }
         },
         "required": [
-          "accessToken",
           "expiresIn",
           "isNewPlayer",
-          "username"
+          "username",
+          "accessToken"
         ]
       },
       "DailyProgressDto": {
@@ -1009,19 +1010,19 @@
             "type": "number",
             "description": "Rounds already bet on today, 0 if none."
           },
-          "roundCount": {
-            "type": "number"
-          },
           "complete": {
             "type": "boolean",
             "description": "True once every round has been played."
+          },
+          "roundCount": {
+            "type": "number"
           }
         },
         "required": [
           "challengeDate",
           "roundsPlayed",
-          "roundCount",
-          "complete"
+          "complete",
+          "roundCount"
         ]
       },
       "LastDailyMissDto": {
@@ -1030,15 +1031,6 @@
           "challengeDate": {
             "type": "string",
             "description": "The UTC challenge day the round belongs to."
-          },
-          "itemId": {
-            "type": "number"
-          },
-          "title": {
-            "type": "string"
-          },
-          "photoUrl": {
-            "type": "string"
           },
           "currency": {
             "enum": [
@@ -1059,50 +1051,43 @@
           "truePriceCents": {
             "type": "number",
             "description": "What it actually went for, minor units."
+          },
+          "itemId": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "photoUrl": {
+            "type": "string"
           }
         },
         "required": [
           "challengeDate",
-          "itemId",
-          "title",
-          "photoUrl",
           "currency",
           "loCents",
           "hiCents",
-          "truePriceCents"
+          "truePriceCents",
+          "itemId",
+          "title",
+          "photoUrl"
         ]
       },
       "MeDto": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "number"
-          },
           "username": {
             "type": "string",
             "nullable": true
-          },
-          "avatarSeed": {
-            "type": "string"
-          },
-          "totalPoints": {
-            "type": "number"
           },
           "streakDays": {
             "type": "number",
             "description": "Zero once the streak lapses, whatever is stored."
           },
-          "bestRoundScore": {
-            "type": "number"
-          },
           "globalRank": {
             "type": "number",
             "nullable": true,
             "description": "Today’s global rank, if ranked."
-          },
-          "createdAt": {
-            "format": "date-time",
-            "type": "string"
           },
           "dailyProgress": {
             "description": "Progress through today’s challenge. Present even before it is started, so a client can render \"Play\" and \"Continue · round 3\" from one answer.",
@@ -1121,19 +1106,35 @@
                 "$ref": "#/components/schemas/LastDailyMissDto"
               }
             ]
+          },
+          "id": {
+            "type": "number"
+          },
+          "avatarSeed": {
+            "type": "string"
+          },
+          "totalPoints": {
+            "type": "number"
+          },
+          "bestRoundScore": {
+            "type": "number"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
           }
         },
         "required": [
-          "id",
           "username",
+          "streakDays",
+          "globalRank",
+          "dailyProgress",
+          "lastDailyMiss",
+          "id",
           "avatarSeed",
           "totalPoints",
-          "streakDays",
           "bestRoundScore",
-          "globalRank",
-          "createdAt",
-          "dailyProgress",
-          "lastDailyMiss"
+          "createdAt"
         ]
       },
       "ClaimUsernameDto": {
@@ -1153,9 +1154,6 @@
       "UsernameAvailabilityDto": {
         "type": "object",
         "properties": {
-          "available": {
-            "type": "boolean"
-          },
           "normalised": {
             "type": "string",
             "description": "The handle as it would be stored."
@@ -1174,13 +1172,16 @@
               "username-taken"
             ],
             "description": "Stable slug for the client to pick its own copy from; null when available."
+          },
+          "available": {
+            "type": "boolean"
           }
         },
         "required": [
-          "available",
           "normalised",
           "reason",
-          "code"
+          "code",
+          "available"
         ]
       },
       "CurrencyDto": {
@@ -1220,34 +1221,34 @@
       "LeaderboardRowDto": {
         "type": "object",
         "properties": {
+          "username": {
+            "type": "string",
+            "nullable": true
+          },
+          "isMe": {
+            "type": "boolean",
+            "description": "True for the requesting player’s own row."
+          },
           "rank": {
             "type": "number"
           },
           "userId": {
             "type": "number"
           },
-          "username": {
-            "type": "string",
-            "nullable": true
-          },
           "avatarSeed": {
             "type": "string"
           },
           "score": {
             "type": "number"
-          },
-          "isMe": {
-            "type": "boolean",
-            "description": "True for the requesting player’s own row."
           }
         },
         "required": [
+          "username",
+          "isMe",
           "rank",
           "userId",
-          "username",
           "avatarSeed",
-          "score",
-          "isMe"
+          "score"
         ]
       },
       "LeaderboardMeDto": {
@@ -1258,9 +1259,6 @@
             "nullable": true,
             "description": "Null when the player has no score yet."
           },
-          "score": {
-            "type": "number"
-          },
           "delta": {
             "type": "number",
             "nullable": true,
@@ -1270,13 +1268,16 @@
             "type": "number",
             "nullable": true,
             "description": "Percent of players beaten, 0–100. Null when unranked."
+          },
+          "score": {
+            "type": "number"
           }
         },
         "required": [
           "rank",
-          "score",
           "delta",
-          "percentile"
+          "percentile",
+          "score"
         ]
       },
       "LeaderboardResponseDto": {
@@ -1313,12 +1314,12 @@
               "$ref": "#/components/schemas/LeaderboardRowDto"
             }
           },
-          "totalPlayers": {
-            "type": "number"
-          },
           "tiedAtTop": {
             "type": "number",
             "description": "How many players share the top score — 1 when first place is undisputed, 0 on an empty board. Lets a client caption a tied podium."
+          },
+          "totalPlayers": {
+            "type": "number"
           }
         },
         "required": [
@@ -1327,16 +1328,13 @@
           "rows",
           "me",
           "neighbours",
-          "totalPlayers",
-          "tiedAtTop"
+          "tiedAtTop",
+          "totalPlayers"
         ]
       },
       "ThemeDto": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "number"
-          },
           "slug": {
             "type": "string",
             "example": "everyday-stuff"
@@ -1385,17 +1383,20 @@
           "itemCount": {
             "type": "number",
             "description": "Playable item count; a theme needs at least 5."
+          },
+          "id": {
+            "type": "number"
           }
         },
         "required": [
-          "id",
           "slug",
           "name",
           "iconName",
           "isMystery",
           "bonusPct",
           "difficultyLabel",
-          "itemCount"
+          "itemCount",
+          "id"
         ]
       },
       "CreateSessionDto": {
@@ -1429,9 +1430,6 @@
       "SessionDto": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string"
-          },
           "mode": {
             "enum": [
               "daily",
@@ -1452,12 +1450,6 @@
             "type": "number",
             "description": "Index of the next unplayed round."
           },
-          "roundCount": {
-            "type": "number"
-          },
-          "totalScore": {
-            "type": "number"
-          },
           "themeSlug": {
             "type": "string",
             "nullable": true
@@ -1473,19 +1465,28 @@
           "resumed": {
             "type": "boolean",
             "description": "True when an in-progress session was returned."
+          },
+          "id": {
+            "type": "string"
+          },
+          "roundCount": {
+            "type": "number"
+          },
+          "totalScore": {
+            "type": "number"
           }
         },
         "required": [
-          "id",
           "mode",
           "status",
           "currentIndex",
-          "roundCount",
-          "totalScore",
           "themeSlug",
           "themeName",
           "matchId",
-          "resumed"
+          "resumed",
+          "id",
+          "roundCount",
+          "totalScore"
         ]
       },
       "MultiplierCurveDto": {
@@ -1534,18 +1535,9 @@
       "CurrentRoundDto": {
         "type": "object",
         "properties": {
-          "sessionId": {
-            "type": "string"
-          },
           "roundIndex": {
             "type": "number",
             "description": "Zero-based; \"Round 3 of 5\" is index 2."
-          },
-          "roundCount": {
-            "type": "number"
-          },
-          "itemId": {
-            "type": "number"
           },
           "title": {
             "type": "string",
@@ -1554,9 +1546,6 @@
           "conditionLine": {
             "type": "string",
             "example": "Lightly used · aluminium base · 2019"
-          },
-          "photoUrl": {
-            "type": "string"
           },
           "currency": {
             "enum": [
@@ -1567,12 +1556,6 @@
             "type": "string",
             "description": "The currency every amount below is in."
           },
-          "sliderMinCents": {
-            "type": "number"
-          },
-          "sliderMaxCents": {
-            "type": "number"
-          },
           "incrementCents": {
             "type": "number",
             "description": "Slider step, in cents. Bets must land on it."
@@ -1580,9 +1563,6 @@
           "suggestedLoCents": {
             "type": "number",
             "description": "Suggested opening range, already snapped."
-          },
-          "suggestedHiCents": {
-            "type": "number"
           },
           "totalScore": {
             "type": "number",
@@ -1615,28 +1595,49 @@
                 "$ref": "#/components/schemas/MultiplierCurveDto"
               }
             ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "roundCount": {
+            "type": "number"
+          },
+          "itemId": {
+            "type": "number"
+          },
+          "photoUrl": {
+            "type": "string"
+          },
+          "sliderMinCents": {
+            "type": "number"
+          },
+          "sliderMaxCents": {
+            "type": "number"
+          },
+          "suggestedHiCents": {
+            "type": "number"
           }
         },
         "required": [
-          "sessionId",
           "roundIndex",
-          "roundCount",
-          "itemId",
           "title",
           "conditionLine",
-          "photoUrl",
           "currency",
-          "sliderMinCents",
-          "sliderMaxCents",
           "incrementCents",
           "suggestedLoCents",
-          "suggestedHiCents",
           "totalScore",
           "roundSeconds",
           "expiresAt",
           "remainingMs",
           "opponentUsername",
-          "multiplierCurve"
+          "multiplierCurve",
+          "sessionId",
+          "roundCount",
+          "itemId",
+          "photoUrl",
+          "sliderMinCents",
+          "sliderMaxCents",
+          "suggestedHiCents"
         ]
       },
       "PlaceBetDto": {
@@ -1668,9 +1669,62 @@
           "hiCents"
         ]
       },
+      "OpponentStateDto": {
+        "type": "object",
+        "properties": {
+          "opponentUsername": {
+            "type": "string",
+            "nullable": true
+          },
+          "opponentRoundPoints": {
+            "type": "number",
+            "nullable": true,
+            "description": "Points the opponent scored on this round, once they have played."
+          },
+          "leadLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "\"You lead 3–1\", or null while level."
+          },
+          "matchId": {
+            "type": "string"
+          },
+          "yourScore": {
+            "type": "number"
+          },
+          "opponentScore": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "opponentUsername",
+          "opponentRoundPoints",
+          "leadLabel",
+          "matchId",
+          "yourScore",
+          "opponentScore"
+        ]
+      },
       "RoundResultDto": {
         "type": "object",
         "properties": {
+          "timedOut": {
+            "type": "boolean",
+            "description": "The bet reached the server after the round’s deadline and scored nothing. `hit` is false on such a round even when the range did contain the price — compare `truePriceCents` against the bounds to say so."
+          },
+          "elapsedMs": {
+            "type": "number",
+            "nullable": true,
+            "description": "Server-measured milliseconds spent on the round."
+          },
+          "missedByCents": {
+            "type": "number",
+            "description": "Cents between the guess and the price; 0 on a hit."
+          },
+          "errorPct": {
+            "type": "number",
+            "description": "Signed relative error of the range centre."
+          },
           "roundIndex": {
             "type": "number"
           },
@@ -1692,19 +1746,6 @@
           "hit": {
             "type": "boolean"
           },
-          "timedOut": {
-            "type": "boolean",
-            "description": "The bet reached the server after the round’s deadline and scored nothing. `hit` is false on such a round even when the range did contain the price — compare `truePriceCents` against the bounds to say so."
-          },
-          "elapsedMs": {
-            "type": "number",
-            "nullable": true,
-            "description": "Server-measured milliseconds spent on the round."
-          },
-          "missedByCents": {
-            "type": "number",
-            "description": "Cents between the guess and the price; 0 on a hit."
-          },
           "basePoints": {
             "type": "number"
           },
@@ -1713,13 +1754,13 @@
           },
           "points": {
             "type": "number"
-          },
-          "errorPct": {
-            "type": "number",
-            "description": "Signed relative error of the range centre."
           }
         },
         "required": [
+          "timedOut",
+          "elapsedMs",
+          "missedByCents",
+          "errorPct",
           "roundIndex",
           "itemId",
           "title",
@@ -1727,60 +1768,14 @@
           "hiCents",
           "truePriceCents",
           "hit",
-          "timedOut",
-          "elapsedMs",
-          "missedByCents",
           "basePoints",
           "multiplier",
-          "points",
-          "errorPct"
-        ]
-      },
-      "OpponentStateDto": {
-        "type": "object",
-        "properties": {
-          "matchId": {
-            "type": "string"
-          },
-          "opponentUsername": {
-            "type": "string",
-            "nullable": true
-          },
-          "yourScore": {
-            "type": "number"
-          },
-          "opponentScore": {
-            "type": "number"
-          },
-          "opponentRoundPoints": {
-            "type": "number",
-            "nullable": true,
-            "description": "Points the opponent scored on this round, once they have played."
-          },
-          "leadLabel": {
-            "type": "string",
-            "nullable": true,
-            "description": "\"You lead 3–1\", or null while level."
-          }
-        },
-        "required": [
-          "matchId",
-          "opponentUsername",
-          "yourScore",
-          "opponentScore",
-          "opponentRoundPoints",
-          "leadLabel"
+          "points"
         ]
       },
       "RevealResponseDto": {
         "type": "object",
         "properties": {
-          "sessionId": {
-            "type": "string"
-          },
-          "round": {
-            "$ref": "#/components/schemas/RoundResultDto"
-          },
           "currency": {
             "enum": [
               "USD",
@@ -1790,22 +1785,10 @@
             "type": "string",
             "description": "The currency every amount below, and inside `round`, is in."
           },
-          "sliderMinCents": {
-            "type": "number"
-          },
-          "sliderMaxCents": {
-            "type": "number"
-          },
-          "totalScore": {
-            "type": "number"
-          },
           "nextRoundIndex": {
             "type": "number",
             "nullable": true,
             "description": "Null when the session is over."
-          },
-          "isSessionComplete": {
-            "type": "boolean"
           },
           "replayed": {
             "type": "boolean",
@@ -1819,26 +1802,41 @@
                 "$ref": "#/components/schemas/OpponentStateDto"
               }
             ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "round": {
+            "$ref": "#/components/schemas/RoundResultDto"
+          },
+          "sliderMinCents": {
+            "type": "number"
+          },
+          "sliderMaxCents": {
+            "type": "number"
+          },
+          "totalScore": {
+            "type": "number"
+          },
+          "isSessionComplete": {
+            "type": "boolean"
           }
         },
         "required": [
+          "currency",
+          "nextRoundIndex",
+          "replayed",
           "sessionId",
           "round",
-          "currency",
           "sliderMinCents",
           "sliderMaxCents",
           "totalScore",
-          "nextRoundIndex",
-          "isSessionComplete",
-          "replayed"
+          "isSessionComplete"
         ]
       },
       "SessionSummaryDto": {
         "type": "object",
         "properties": {
-          "sessionId": {
-            "type": "string"
-          },
           "mode": {
             "enum": [
               "daily",
@@ -1859,15 +1857,9 @@
             "type": "number",
             "description": "Ranges hit, out of roundCount. The \"2/5\" circle."
           },
-          "roundCount": {
-            "type": "number"
-          },
           "avgErrorPct": {
             "type": "number",
             "description": "Mean absolute centre error, 0–1. \"avg 18% off\"."
-          },
-          "totalScore": {
-            "type": "number"
           },
           "currency": {
             "enum": [
@@ -1919,16 +1911,22 @@
                 "$ref": "#/components/schemas/OpponentStateDto"
               }
             ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "roundCount": {
+            "type": "number"
+          },
+          "totalScore": {
+            "type": "number"
           }
         },
         "required": [
-          "sessionId",
           "mode",
           "status",
           "hits",
-          "roundCount",
           "avgErrorPct",
-          "totalScore",
           "currency",
           "rounds",
           "percentile",
@@ -1936,7 +1934,10 @@
           "sharedWith",
           "rankDelta",
           "leaderboardEligible",
-          "shareText"
+          "shareText",
+          "sessionId",
+          "roundCount",
+          "totalScore"
         ]
       },
       "CreateMatchDto": {
@@ -1993,12 +1994,6 @@
       "MatchDto": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string"
-          },
-          "inviteCode": {
-            "type": "string"
-          },
           "deepLink": {
             "type": "string",
             "example": "cashortrash://match/K7PXQ2"
@@ -2011,12 +2006,6 @@
               "expired"
             ],
             "type": "string"
-          },
-          "themeSlug": {
-            "type": "string"
-          },
-          "roundCount": {
-            "type": "number"
           },
           "host": {
             "$ref": "#/components/schemas/MatchPlayerDto"
@@ -2034,18 +2023,30 @@
             "type": "number",
             "nullable": true,
             "description": "Null while in progress or on a draw."
+          },
+          "id": {
+            "type": "string"
+          },
+          "inviteCode": {
+            "type": "string"
+          },
+          "themeSlug": {
+            "type": "string"
+          },
+          "roundCount": {
+            "type": "number"
           }
         },
         "required": [
-          "id",
-          "inviteCode",
           "deepLink",
           "status",
-          "themeSlug",
-          "roundCount",
           "host",
           "guest",
-          "winnerUserId"
+          "winnerUserId",
+          "id",
+          "inviteCode",
+          "themeSlug",
+          "roundCount"
         ]
       },
       "JoinMatchDto": {
@@ -2065,18 +2066,9 @@
       "FriendDto": {
         "type": "object",
         "properties": {
-          "userId": {
-            "type": "number"
-          },
           "username": {
             "type": "string",
             "nullable": true
-          },
-          "avatarSeed": {
-            "type": "string"
-          },
-          "totalPoints": {
-            "type": "number"
           },
           "streakDays": {
             "type": "number",
@@ -2086,15 +2078,24 @@
             "format": "date-time",
             "type": "string",
             "description": "When the two became friends."
+          },
+          "userId": {
+            "type": "number"
+          },
+          "avatarSeed": {
+            "type": "string"
+          },
+          "totalPoints": {
+            "type": "number"
           }
         },
         "required": [
-          "userId",
           "username",
-          "avatarSeed",
-          "totalPoints",
           "streakDays",
-          "friendsSince"
+          "friendsSince",
+          "userId",
+          "avatarSeed",
+          "totalPoints"
         ]
       },
       "FriendListDto": {
@@ -2140,11 +2141,6 @@
             ],
             "type": "string"
           },
-          "token": {
-            "type": "string",
-            "minLength": 8,
-            "maxLength": 512
-          },
           "timezoneOffsetMinutes": {
             "type": "number",
             "minimum": -720,
@@ -2162,6 +2158,11 @@
             "type": "string",
             "default": "en",
             "description": "The language to send this device’s nudges in. Push copy is composed on the server long after the app last ran, so it cannot be read from the request that receives it."
+          },
+          "token": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 512
           }
         },
         "required": [
@@ -2176,11 +2177,11 @@
             "type": "boolean"
           },
           "platform": {
+            "type": "string",
             "enum": [
               "ios",
               "android"
-            ],
-            "type": "string"
+            ]
           }
         },
         "required": [
@@ -2195,9 +2196,6 @@
             "type": "string",
             "nullable": true
           },
-          "avatarSeed": {
-            "type": "string"
-          },
           "totalPoints": {
             "type": "number",
             "description": "The \"1,240 pts\" tag."
@@ -2206,30 +2204,30 @@
             "type": "number",
             "description": "Your streak. Zero once it lapses."
           },
-          "bestRoundScore": {
-            "type": "number"
-          },
           "globalRank": {
             "type": "number",
             "nullable": true,
             "description": "Global rank, or null if unranked."
+          },
+          "avatarSeed": {
+            "type": "string"
+          },
+          "bestRoundScore": {
+            "type": "number"
           }
         },
         "required": [
           "username",
-          "avatarSeed",
           "totalPoints",
           "streakDays",
-          "bestRoundScore",
-          "globalRank"
+          "globalRank",
+          "avatarSeed",
+          "bestRoundScore"
         ]
       },
       "HomeDailyDto": {
         "type": "object",
         "properties": {
-          "challengeDate": {
-            "type": "string"
-          },
           "resetsAt": {
             "format": "date-time",
             "type": "string",
@@ -2248,12 +2246,6 @@
             "type": "number",
             "description": "Rounds already played today — the progress dots."
           },
-          "roundCount": {
-            "type": "number"
-          },
-          "isComplete": {
-            "type": "boolean"
-          },
           "totalScore": {
             "type": "number",
             "description": "Score so far today."
@@ -2262,18 +2254,27 @@
             "type": "string",
             "example": "Continue · round 3",
             "description": "Contextual label for the hero button."
+          },
+          "challengeDate": {
+            "type": "string"
+          },
+          "roundCount": {
+            "type": "number"
+          },
+          "isComplete": {
+            "type": "boolean"
           }
         },
         "required": [
-          "challengeDate",
           "resetsAt",
           "secondsUntilReset",
           "sessionId",
           "roundsPlayed",
-          "roundCount",
-          "isComplete",
           "totalScore",
-          "ctaLabel"
+          "ctaLabel",
+          "challengeDate",
+          "roundCount",
+          "isComplete"
         ]
       },
       "HomeResponseDto": {

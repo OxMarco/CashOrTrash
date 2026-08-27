@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
+import { cleanupOpenApiDoc } from 'nestjs-zod';
 
 /**
  * The OpenAPI document, built in one place because it now has two consumers
@@ -9,15 +10,17 @@ import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
  * the whole value of generating the client is that it cannot.
  */
 export const createOpenApiDocument = (app: INestApplication): OpenAPIObject =>
-  SwaggerModule.createDocument(
-    app,
-    new DocumentBuilder()
-      .setTitle('CashOrTrash API')
-      .setDescription(
-        'Price-guessing game API. `truePriceCents` is returned by exactly ' +
-          'one endpoint: POST /sessions/:id/rounds/:index/bet.',
-      )
-      .setVersion('1.0')
-      .addBearerAuth()
-      .build(),
+  cleanupOpenApiDoc(
+    SwaggerModule.createDocument(
+      app,
+      new DocumentBuilder()
+        .setTitle('CashOrTrash API')
+        .setDescription(
+          'Price-guessing game API. `truePriceCents` is returned by exactly ' +
+            'one endpoint: POST /sessions/:id/rounds/:index/bet.',
+        )
+        .setVersion('1.0')
+        .addBearerAuth()
+        .build(),
+    ),
   );

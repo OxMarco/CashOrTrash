@@ -5,6 +5,7 @@ import KeyvRedis from '@keyv/redis';
 import Redis, { RedisOptions } from 'ioredis';
 
 import { RedisConfig } from 'src/config/configuration';
+import { defineRedisCommands } from './redis-commands';
 import { CACHE_STORE, REDIS_CLIENT, REDIS_SUBSCRIBER } from './redis.constants';
 
 const baseRedisOptions = (cfg: RedisConfig): RedisOptions => ({
@@ -37,7 +38,7 @@ export const buildRedisUrl = (cfg: RedisConfig): string => {
 
 const clientFactory = (config: ConfigService): Redis => {
   const cfg = config.getOrThrow<RedisConfig>('redis');
-  return new Redis(buildRedisOptions(cfg));
+  return defineRedisCommands(new Redis(buildRedisOptions(cfg)));
 };
 
 /**

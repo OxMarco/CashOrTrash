@@ -42,9 +42,8 @@ export type RateSnapshot = {
  * Half-updated rates would price two items in the same round differently.
  *
  * It moves as little as it can get away with. Reference rates are published
- * once a day, and every refresh widens the window in which a round is dealt at
- * one rate and bet at another — which is why `SessionsService` validates a bet
- * with a tolerance rather than against an exact reconstruction of the grid.
+ * once a day; `SessionsService` pins the snapshot used to deal each round, so
+ * a refresh changes future rounds without moving the grid under a live one.
  */
 @Injectable()
 export class ExchangeRatesService implements OnModuleInit, OnModuleDestroy {

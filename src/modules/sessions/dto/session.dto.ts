@@ -135,7 +135,6 @@ export class PlaceBetDto {
 }
 
 export class SessionDto {
-  @ApiProperty()
   @Expose()
   id: string;
 
@@ -151,11 +150,9 @@ export class SessionDto {
   @Expose()
   currentIndex: number;
 
-  @ApiProperty()
   @Expose()
   roundCount: number;
 
-  @ApiProperty()
   @Expose()
   totalScore: number;
 
@@ -183,7 +180,6 @@ export class SessionDto {
  * This DTO is the reason the entity is never returned directly.
  */
 export class CurrentRoundDto {
-  @ApiProperty()
   @Expose()
   sessionId: string;
 
@@ -191,11 +187,9 @@ export class CurrentRoundDto {
   @Expose()
   roundIndex: number;
 
-  @ApiProperty()
   @Expose()
   roundCount: number;
 
-  @ApiProperty()
   @Expose()
   itemId: number;
 
@@ -207,7 +201,6 @@ export class CurrentRoundDto {
   @Expose()
   conditionLine: string;
 
-  @ApiProperty()
   @Expose()
   photoUrl: string;
 
@@ -218,11 +211,9 @@ export class CurrentRoundDto {
   @Expose()
   currency: Currency;
 
-  @ApiProperty()
   @Expose()
   sliderMinCents: number;
 
-  @ApiProperty()
   @Expose()
   sliderMaxCents: number;
 
@@ -234,7 +225,6 @@ export class CurrentRoundDto {
   @Expose()
   suggestedLoCents: number;
 
-  @ApiProperty()
   @Expose()
   suggestedHiCents: number;
 
@@ -290,31 +280,24 @@ export class CurrentRoundDto {
 }
 
 export class RoundResultDto {
-  @ApiProperty()
   @Expose()
   roundIndex: number;
 
-  @ApiProperty()
   @Expose()
   itemId: number;
 
-  @ApiProperty()
   @Expose()
   title: string;
 
-  @ApiProperty()
   @Expose()
   loCents: number;
 
-  @ApiProperty()
   @Expose()
   hiCents: number;
 
-  @ApiProperty()
   @Expose()
   truePriceCents: number;
 
-  @ApiProperty()
   @Expose()
   hit: boolean;
 
@@ -341,15 +324,12 @@ export class RoundResultDto {
   @Expose()
   missedByCents: number;
 
-  @ApiProperty()
   @Expose()
   basePoints: number;
 
-  @ApiProperty()
   @Expose()
   multiplier: number;
 
-  @ApiProperty()
   @Expose()
   points: number;
 
@@ -359,7 +339,6 @@ export class RoundResultDto {
 }
 
 export class OpponentStateDto {
-  @ApiProperty()
   @Expose()
   matchId: string;
 
@@ -367,11 +346,9 @@ export class OpponentStateDto {
   @Expose()
   opponentUsername: string | null;
 
-  @ApiProperty()
   @Expose()
   yourScore: number;
 
-  @ApiProperty()
   @Expose()
   opponentScore: number;
 
@@ -396,11 +373,9 @@ export class OpponentStateDto {
  * exclusively from the bet endpoint — after the bet is recorded.
  */
 export class RevealResponseDto {
-  @ApiProperty()
   @Expose()
   sessionId: string;
 
-  @ApiProperty()
   @Expose()
   @Type(() => RoundResultDto)
   round: RoundResultDto;
@@ -412,15 +387,12 @@ export class RevealResponseDto {
   @Expose()
   currency: Currency;
 
-  @ApiProperty()
   @Expose()
   sliderMinCents: number;
 
-  @ApiProperty()
   @Expose()
   sliderMaxCents: number;
 
-  @ApiProperty()
   @Expose()
   totalScore: number;
 
@@ -431,7 +403,6 @@ export class RevealResponseDto {
   @Expose()
   nextRoundIndex: number | null;
 
-  @ApiProperty()
   @Expose()
   isSessionComplete: boolean;
 
@@ -448,7 +419,6 @@ export class RevealResponseDto {
 }
 
 export class SessionSummaryDto {
-  @ApiProperty()
   @Expose()
   sessionId: string;
 
@@ -466,7 +436,6 @@ export class SessionSummaryDto {
   @Expose()
   hits: number;
 
-  @ApiProperty()
   @Expose()
   roundCount: number;
 
@@ -476,7 +445,6 @@ export class SessionSummaryDto {
   @Expose()
   avgErrorPct: number;
 
-  @ApiProperty()
   @Expose()
   totalScore: number;
 

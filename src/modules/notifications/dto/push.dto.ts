@@ -23,7 +23,6 @@ export class RegisterPushTokenDto {
   @IsEnum(PushPlatform)
   platform: PushPlatform;
 
-  @ApiProperty()
   @IsString()
   @Length(8, 512)
   token: string;
@@ -53,11 +52,9 @@ export class RegisterPushTokenDto {
 }
 
 export class PushRegistrationDto {
-  @ApiProperty()
   @Expose()
   registered: boolean;
 
-  @ApiProperty()
   @Expose()
   platform: PushPlatform;
 }

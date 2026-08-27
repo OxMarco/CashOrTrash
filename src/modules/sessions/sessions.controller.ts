@@ -55,19 +55,27 @@ export class SessionsController {
     description:
       'Amounts come back in `?currency`, dollars by default. Bet in the same ' +
       'one: the slider grid differs per currency, and a bet snapped to the ' +
-      'euro grid is not on the dollar one. The title and description come ' +
-      'back in `?lang`, English by default and English wherever an item has ' +
-      'no copy in the language asked for.',
+      'euro grid is not on the dollar one. Passing `?currency` deals the ' +
+      'round in it and holds that quote for the rest of the round; omitting ' +
+      'the parameter leaves an already-dealt round in the currency it was ' +
+      'dealt in, so read `currency` off the response rather than assuming the ' +
+      'one asked for. The title and description come back in `?lang`, English ' +
+      'by default and English wherever an item has no copy in the language ' +
+      'asked for.',
   })
   async current(
     @CurrentUser('id') userId: number,
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: RoundQueryDto,
   ): Promise<CurrentRoundDto> {
+    // `query.currency` is passed through undefined on purpose: the service
+    // distinguishes "deal this round in EUR" from "no preference, whatever
+    // this round is already in". Defaulting here would collapse the two and
+    // make a parameterless prefetch silently pin the round to dollars.
     return this.sessions.getCurrentRound(
       id,
       userId,
-      query.currency ?? DEFAULT_CURRENCY,
+      query.currency,
       query.lang ?? DEFAULT_LANGUAGE,
     );
   }

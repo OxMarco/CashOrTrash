@@ -27,6 +27,11 @@ export enum MatchStatus {
 @Entity('match')
 @Check('ck_match_items', 'cardinality("itemIds") > 0')
 @Check(
+  'ck_match_slider_bounds',
+  `("sliderMinCents" IS NULL) = ("sliderMaxCents" IS NULL) AND
+   ("sliderMinCents" IS NULL OR (cardinality("sliderMinCents") = cardinality("itemIds") AND cardinality("sliderMaxCents") = cardinality("itemIds")))`,
+)
+@Check(
   'ck_match_players',
   '"guestUserId" IS NULL OR "hostUserId" <> "guestUserId"',
 )
@@ -47,6 +52,15 @@ export class Match {
 
   @Column({ type: 'int', array: true })
   itemIds: number[];
+
+  @Column({ type: 'int', array: true, nullable: true })
+  sliderMinCents: number[] | null;
+
+  @Column({ type: 'int', array: true, nullable: true })
+  sliderMaxCents: number[] | null;
+
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  scoringVersion: string | null;
 
   @Column({ type: 'int' })
   themeId: number;

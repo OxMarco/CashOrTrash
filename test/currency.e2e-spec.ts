@@ -1,4 +1,8 @@
 import { Api } from './support/api-client';
+import {
+  ExchangeRatesService,
+  RateSnapshot,
+} from '../src/modules/currency/exchange-rates.service';
 import { registerPlayer } from './support/players';
 import { createTestApp, resetGameplayState, TestApp } from './support/test-app';
 
@@ -76,25 +80,141 @@ describe('playing in another currency', () => {
     expect(response.status).toBe(400);
   });
 
-  it('deals the same item on a slider denominated in the chosen currency', async () => {
+  it('pins the currency selected when a round is first dealt', async () => {
     const me = await player();
     const sessionId = await startQuick(me.api);
 
-    const dollars = await me.api.get(`/v1/sessions/${sessionId}/current`);
+    const euros = await me.api.get(
+      `/v1/sessions/${sessionId}/current?currency=EUR`,
+    );
+    const retriedInDollars = await me.api.get(
+      `/v1/sessions/${sessionId}/current`,
+    );
+
+    expect(euros.body.currency).toBe('EUR');
+    expect(retriedInDollars.body.currency).toBe('EUR');
+    expect(retriedInDollars.body.itemId).toBe(euros.body.itemId);
+    expect(retriedInDollars.body.sliderMinCents).toBe(
+      euros.body.sliderMinCents,
+    );
+    expect(retriedInDollars.body.sliderMaxCents).toBe(
+      euros.body.sliderMaxCents,
+    );
+    expect(euros.body.suggestedLoCents % euros.body.incrementCents).toBe(
+      euros.body.sliderMinCents % euros.body.incrementCents,
+    );
+  });
+
+  /**
+   * A prefetch, a resume-from-home fetch, a retry — plenty of clients hit
+   * `/current` with no `?currency` and mean nothing by it. Treating that as a
+   * choice would pin the round to dollars and then reject the euro bet the
+   * player actually goes on to place.
+   */
+  it('lets an explicit choice override a currency nothing asked for', async () => {
+    const me = await player();
+    const sessionId = await startQuick(me.api);
+
+    const prefetch = await me.api.get(`/v1/sessions/${sessionId}/current`);
     const euros = await me.api.get(
       `/v1/sessions/${sessionId}/current?currency=EUR`,
     );
 
-    expect(euros.body.itemId).toBe(dollars.body.itemId);
-    expect(dollars.body.currency).toBe('USD');
+    expect(prefetch.body.currency).toBe('USD');
     expect(euros.body.currency).toBe('EUR');
-    // Not the dollar bounds relabelled: converted, and then given a step
-    // derived from the converted span so the slider still snaps to round euro
-    // amounts rather than to the fractional shadow of a dollar one.
-    expect(euros.body.sliderMinCents).not.toBe(dollars.body.sliderMinCents);
-    expect(euros.body.suggestedLoCents % euros.body.incrementCents).toBe(
-      euros.body.sliderMinCents % euros.body.incrementCents,
+
+    const bet = await me.api.post(`/v1/sessions/${sessionId}/rounds/0/bet`, {
+      loCents: euros.body.suggestedLoCents,
+      hiCents: euros.body.suggestedHiCents,
+      currency: 'EUR',
+    });
+
+    expect(bet.status).toBe(200);
+  });
+
+  /**
+   * Switching currency is re-dealing the round, not buying a new one: the grid
+   * changes because the scale does, and the shot clock keeps running from the
+   * first deal. A bet is checked against whichever quote was served last, so a
+   * player who switches has to re-read the round before betting.
+   */
+  it('re-deals the round when the player switches currency', async () => {
+    const me = await player();
+    const sessionId = await startQuick(me.api);
+
+    const euros = await me.api.get(
+      `/v1/sessions/${sessionId}/current?currency=EUR`,
     );
+    const stale = await me.api.post(`/v1/sessions/${sessionId}/rounds/0/bet`, {
+      loCents: euros.body.suggestedLoCents,
+      hiCents: euros.body.suggestedHiCents,
+      currency: 'GBP',
+    });
+    expect(stale.status).toBe(400);
+
+    const pounds = await me.api.get(
+      `/v1/sessions/${sessionId}/current?currency=GBP`,
+    );
+    expect(pounds.body.currency).toBe('GBP');
+    expect(pounds.body.itemId).toBe(euros.body.itemId);
+    // The same round, so the deadline is the one set on the first deal —
+    // switching currency must not hand the player a fresh clock.
+    expect(pounds.body.expiresAt).toEqual(euros.body.expiresAt);
+
+    const bet = await me.api.post(`/v1/sessions/${sessionId}/rounds/0/bet`, {
+      loCents: pounds.body.suggestedLoCents,
+      hiCents: pounds.body.suggestedHiCents,
+      currency: 'GBP',
+    });
+    expect(bet.status).toBe(200);
+    expect(bet.body.currency).toBe('GBP');
+  });
+
+  it('keeps the dealt quote when live exchange rates change', async () => {
+    const me = await player();
+    const sessionId = await startQuick(me.api);
+    const exchange = ctx.app.get(ExchangeRatesService);
+    const original = exchange.current();
+
+    try {
+      const round = await me.api.get(
+        `/v1/sessions/${sessionId}/current?currency=EUR`,
+      );
+      const [pinned] = await ctx.dataSource.query(
+        'SELECT "currentExchangeRate" AS rate FROM game_session WHERE id = $1',
+        [sessionId],
+      );
+
+      (exchange as unknown as { snapshot: RateSnapshot }).snapshot = {
+        ...original,
+        rates: { ...original.rates, EUR: original.rates.EUR * 1.5 },
+      };
+
+      const retry = await me.api.get(
+        `/v1/sessions/${sessionId}/current?currency=EUR`,
+      );
+      expect(retry.body.sliderMinCents).toBe(round.body.sliderMinCents);
+      expect(retry.body.sliderMaxCents).toBe(round.body.sliderMaxCents);
+
+      const reveal = await me.api.post(
+        `/v1/sessions/${sessionId}/rounds/0/bet`,
+        {
+          loCents: round.body.suggestedLoCents,
+          hiCents: round.body.suggestedHiCents,
+          currency: 'EUR',
+        },
+      );
+      expect(reveal.status).toBe(200);
+
+      const [stored] = await ctx.dataSource.query(
+        'SELECT "exchangeRate" AS rate FROM session_round WHERE "sessionId" = $1 AND "roundIndex" = 0',
+        [sessionId],
+      );
+      expect(Number(stored.rate)).toBe(Number(pinned.rate));
+      expect(Number(stored.rate)).toBe(original.rates.EUR);
+    } finally {
+      (exchange as unknown as { snapshot: RateSnapshot }).snapshot = original;
+    }
   });
 
   /**

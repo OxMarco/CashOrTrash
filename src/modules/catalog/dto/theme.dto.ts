@@ -4,7 +4,6 @@ import { Expose } from 'class-transformer';
 import { THEME_ICONS } from '../theme-icons';
 
 export class ThemeDto {
-  @ApiProperty()
   @Expose()
   id: number;
 

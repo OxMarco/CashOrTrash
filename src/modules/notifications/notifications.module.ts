@@ -8,7 +8,12 @@ import { PushToken } from './entities/push-token.entity';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { PushConfig } from 'src/config/configuration';
-import { ExpoPushSender, LoggingPushSender, PushSender } from './push-sender';
+import {
+  ExpoGateway,
+  ExpoPushSender,
+  LoggingPushSender,
+  PushSender,
+} from './push-sender';
 
 @Module({
   imports: [TypeOrmModule.forFeature([PushToken, User, GameSession])],
@@ -16,6 +21,7 @@ import { ExpoPushSender, LoggingPushSender, PushSender } from './push-sender';
   providers: [
     NotificationsService,
     LoggingPushSender,
+    ExpoGateway,
     ExpoPushSender,
     {
       provide: PushSender,

@@ -6,7 +6,6 @@ export class HomePlayerDto {
   @Expose()
   username: string | null;
 
-  @ApiProperty()
   @Expose()
   avatarSeed: string;
 
@@ -18,7 +17,6 @@ export class HomePlayerDto {
   @Expose()
   streakDays: number;
 
-  @ApiProperty()
   @Expose()
   bestRoundScore: number;
 
@@ -31,7 +29,6 @@ export class HomePlayerDto {
 }
 
 export class HomeDailyDto {
-  @ApiProperty()
   @Expose()
   challengeDate: string;
 
@@ -55,11 +52,9 @@ export class HomeDailyDto {
   @Expose()
   roundsPlayed: number;
 
-  @ApiProperty()
   @Expose()
   roundCount: number;
 
-  @ApiProperty()
   @Expose()
   isComplete: boolean;
 

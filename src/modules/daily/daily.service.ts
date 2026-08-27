@@ -12,6 +12,8 @@ import {
 } from 'src/common/utils/date.util';
 import { seedForDate } from 'src/common/utils/seeded-random';
 import { CatalogService } from '../catalog/catalog.service';
+import { deriveSliderBoundsSet } from '../catalog/slider';
+import { CURRENT_SCORING } from '../scoring/constants';
 import { DailyChallenge } from './entities/daily-challenge.entity';
 
 /** Past this share of the catalogue held in reserve, say so at generation. */
@@ -28,6 +30,7 @@ export class DailyService {
   private readonly logger = new Logger(DailyService.name);
   private readonly roundsPerSession: number;
   private readonly seedSecret: string;
+  private readonly sliderSeedSecret: string;
   private readonly pregenerateDays: number;
 
   constructor(
@@ -39,6 +42,7 @@ export class DailyService {
     const app = config.getOrThrow<AppConfig>('app');
     this.roundsPerSession = app.roundsPerSession;
     this.seedSecret = app.dailySeedSecret;
+    this.sliderSeedSecret = app.sliderSeedSecret;
     this.pregenerateDays = app.dailyPregenerateDays;
   }
 
@@ -82,12 +86,24 @@ export class DailyService {
       // it was not watching.
       { reserveDaily: true },
     );
+    const items = await this.catalog.findItemsInOrder(itemIds);
+    const sliderBounds = deriveSliderBoundsSet(
+      { id: date, mode: 'daily', dailyDate: date, matchId: null },
+      items,
+      this.sliderSeedSecret,
+    );
 
     await this.challenges
       .createQueryBuilder()
       .insert()
       .into(DailyChallenge)
-      .values({ challengeDate: date, itemIds, seed })
+      .values({
+        challengeDate: date,
+        itemIds,
+        seed,
+        ...sliderBounds,
+        scoringVersion: CURRENT_SCORING.version,
+      })
       .orIgnore()
       .execute();
 

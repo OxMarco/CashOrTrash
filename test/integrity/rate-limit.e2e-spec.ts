@@ -260,6 +260,29 @@ describe('rate limiting', () => {
       }
     });
 
+    it('charges concurrent retries for one device only once', async () => {
+      const original = config.accountsPerIpPerDay;
+      config.accountsPerIpPerDay = 1;
+
+      try {
+        const retries = await Promise.all(
+          Array.from({ length: 8 }, () =>
+            api.post('/v1/auth/anonymous', {
+              deviceId: 'one-racing-device',
+            }),
+          ),
+        );
+        expect(retries.every((response) => response.status === 200)).toBe(true);
+
+        const distinct = await api.post('/v1/auth/anonymous', {
+          deviceId: 'second-distinct-device',
+        });
+        expect(distinct.status).toBe(429);
+      } finally {
+        config.accountsPerIpPerDay = original;
+      }
+    });
+
     it('records where an account was registered from', async () => {
       await registerPlayer(api, 'rate-device-0006', 'traced');
 

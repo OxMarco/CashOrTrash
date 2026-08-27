@@ -11,6 +11,7 @@ import { UsersModule } from '../users/users.module';
 import { GameSession } from './entities/game-session.entity';
 import { SessionRound } from './entities/session-round.entity';
 import { SessionsController } from './sessions.controller';
+import { SessionCreationService } from './session-creation.service';
 import { SessionsService } from './sessions.service';
 
 @Module({
@@ -25,7 +26,7 @@ import { SessionsService } from './sessions.service';
     MatchesModule,
   ],
   controllers: [SessionsController],
-  providers: [SessionsService],
+  providers: [SessionCreationService, SessionsService],
   exports: [SessionsService],
 })
 export class SessionsModule {}

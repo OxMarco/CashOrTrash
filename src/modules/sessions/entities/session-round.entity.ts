@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 
 import { Item } from '../../catalog/entities/item.entity';
+import { Currency } from '../../currency/currency.constants';
 import { GameSession } from './game-session.entity';
 
 /**
@@ -20,6 +21,11 @@ import { GameSession } from './game-session.entity';
 @Check(
   'ck_session_round_values',
   '"roundIndex" >= 0 AND "loCents" >= 0 AND "loCents" < "hiCents" AND "multiplier" > 0 AND "basePoints" >= 0 AND "points" >= 0 AND ("elapsedMs" IS NULL OR "elapsedMs" >= 0) AND (NOT "timedOut" OR "points" = 0)',
+)
+@Check(
+  'ck_session_round_quote',
+  `("currency" IS NULL) = ("exchangeRate" IS NULL) AND
+   ("exchangeRate" IS NULL OR "exchangeRate" > 0)`,
 )
 export class SessionRound {
   @PrimaryColumn({ type: 'uuid' })
@@ -92,6 +98,13 @@ export class SessionRound {
    */
   @Column({ type: 'varchar', length: 16 })
   scoringVersion: string;
+
+  /** The exact quote used to validate and score this bet. */
+  @Column({ type: 'varchar', length: 3, nullable: true })
+  currency: Currency | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  exchangeRate: number | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   placedAt: Date;

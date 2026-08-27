@@ -46,6 +46,13 @@ describe('CurrencyService', () => {
     expect(build({ EUR: 1.25 }).fromUsdCents(10_000, 'EUR')).toBe(12_500);
   });
 
+  it('uses an explicitly pinned quote after the live rate changes', () => {
+    const changed = build({ EUR: 1.25 });
+
+    expect(changed.fromUsdCents(10_000, 'EUR', 0.5)).toBe(5_000);
+    expect(changed.toUsdCents(5_000, 'EUR', 0.5)).toBe(10_000);
+  });
+
   it('round-trips a price to within a minor unit', () => {
     // The reveal shows the same number the player bet against, so drift here
     // would read as the game moving the answer after the fact.

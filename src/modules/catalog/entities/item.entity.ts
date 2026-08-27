@@ -91,10 +91,9 @@ export class Item {
   @Column({ type: 'int' })
   truePriceCents: number;
 
-  // The slider the player is given is not stored. It is drawn when the round is
-  // dealt, from a seed that varies per play but is shared by everyone whose
-  // scores are being compared — see `slider.ts`. Storing it would mean an item
-  // always came back on the scale a repeat player remembers.
+  // Slider bounds live on the challenge/match/session, never on the item. They
+  // vary per play, but are pinned before the play starts so a secret rotation
+  // cannot alter an in-flight round — see `slider.ts`.
 
   @Column({ type: 'int' })
   themeId: number;

@@ -36,6 +36,11 @@ export interface StoredObject {
   bytes: number;
 }
 
+export interface StoredObjectEntry {
+  digest: string;
+  modifiedAt: Date;
+}
+
 /**
  * Content-addressed blob storage for item photography.
  *
@@ -50,8 +55,8 @@ export abstract class MediaStore {
   abstract open(digest: string): Promise<StoredObject | null>;
   abstract has(digest: string): Promise<boolean>;
   abstract delete(digest: string): Promise<void>;
-  /** Every digest held, for the orphan sweep. */
-  abstract list(): AsyncIterable<string>;
+  /** Every digest held, with enough age information for a race-safe sweep. */
+  abstract list(): AsyncIterable<StoredObjectEntry>;
 }
 
 @Injectable()
@@ -100,7 +105,7 @@ export class LocalMediaStore extends MediaStore {
     await rm(this.pathFor(digest), { force: true });
   }
 
-  async *list(): AsyncIterable<string> {
+  async *list(): AsyncIterable<StoredObjectEntry> {
     const root = join(this.root, 'items');
 
     let entries: string[];
@@ -119,7 +124,16 @@ export class LocalMediaStore extends MediaStore {
 
       const digest = name.slice(0, -'.webp'.length);
       if (DIGEST_PATTERN.test(digest)) {
-        yield digest;
+        try {
+          const info = await stat(join(root, entry));
+          if (info.isFile()) {
+            yield { digest, modifiedAt: info.mtime };
+          }
+        } catch (error) {
+          // An upload rollback can remove a file after the directory walk but
+          // before its stat. It has already achieved the sweep's goal.
+          if (!isMissing(error)) throw error;
+        }
         continue;
       }
 

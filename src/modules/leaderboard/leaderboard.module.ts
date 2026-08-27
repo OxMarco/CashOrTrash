@@ -5,6 +5,7 @@ import { User } from '../users/entities/user.entity';
 import { DailyScore } from './entities/daily-score.entity';
 import { Friendship } from '../friends/entities/friendship.entity';
 import { LeaderboardController } from './leaderboard.controller';
+import { LeaderboardCacheService } from './leaderboard-cache.service';
 import { LeaderboardListener } from './leaderboard.listener';
 import { LeaderboardService } from './leaderboard.service';
 
@@ -16,7 +17,7 @@ import { LeaderboardService } from './leaderboard.service';
 @Module({
   imports: [TypeOrmModule.forFeature([DailyScore, Friendship, User])],
   controllers: [LeaderboardController],
-  providers: [LeaderboardService, LeaderboardListener],
+  providers: [LeaderboardCacheService, LeaderboardService, LeaderboardListener],
   exports: [LeaderboardService],
 })
 export class LeaderboardModule {}

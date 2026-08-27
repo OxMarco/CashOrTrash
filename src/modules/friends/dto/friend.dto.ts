@@ -15,7 +15,6 @@ export class AddFriendDto {
 }
 
 export class FriendDto {
-  @ApiProperty()
   @Expose()
   userId: number;
 
@@ -23,11 +22,9 @@ export class FriendDto {
   @Expose()
   username: string | null;
 
-  @ApiProperty()
   @Expose()
   avatarSeed: string;
 
-  @ApiProperty()
   @Expose()
   totalPoints: number;
 
@@ -48,7 +45,6 @@ export class FriendListDto {
   @Type(() => FriendDto)
   friends: FriendDto[];
 
-  @ApiProperty()
   @Expose()
   count: number;
 }

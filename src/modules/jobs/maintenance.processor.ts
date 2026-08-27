@@ -9,6 +9,7 @@ import { ItemCopyService } from '../catalog/copy/item-copy.service';
 import { DailyService } from '../daily/daily.service';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
 import { MatchesService } from '../matches/matches.service';
+import { MediaGcService } from '../media/media-gc.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UsersService } from '../users/users.service';
 import { ITEM_COPY_LOCK, JOBS, MAINTENANCE_QUEUE } from './jobs.constants';
@@ -25,6 +26,7 @@ export class MaintenanceProcessor extends WorkerHost {
     private readonly notifications: NotificationsService,
     private readonly users: UsersService,
     private readonly matches: MatchesService,
+    private readonly mediaGc: MediaGcService,
     private readonly dataSource: DataSource,
   ) {
     super();
@@ -54,6 +56,9 @@ export class MaintenanceProcessor extends WorkerHost {
 
       case JOBS.MATCH_INVITE_EXPIRE:
         return { expired: await this.matches.expireStaleInvites() };
+
+      case JOBS.MEDIA_ORPHAN_SWEEP:
+        return { deleted: await this.mediaGc.sweep() };
 
       case JOBS.ITEM_COPY:
         return this.writeItemCopy();

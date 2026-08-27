@@ -47,11 +47,9 @@ export class MatchPlayerDto {
 }
 
 export class MatchDto {
-  @ApiProperty()
   @Expose()
   id: string;
 
-  @ApiProperty()
   @Expose()
   inviteCode: string;
 
@@ -63,11 +61,9 @@ export class MatchDto {
   @Expose()
   status: MatchStatus;
 
-  @ApiProperty()
   @Expose()
   themeSlug: string;
 
-  @ApiProperty()
   @Expose()
   roundCount: number;
 

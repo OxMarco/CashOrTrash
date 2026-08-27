@@ -9,6 +9,7 @@ describe('DailyService', () => {
   const app = {
     roundsPerSession: 5,
     dailySeedSecret: 'a-daily-seed-secret-of-at-least-32-chars',
+    sliderSeedSecret: 'a-slider-seed-secret-of-at-least-32-chars',
     dailyPregenerateDays: 7,
   };
 
@@ -42,6 +43,12 @@ describe('DailyService', () => {
 
     const catalog = {
       drawItemIds,
+      findItemsInOrder: jest.fn().mockResolvedValue(
+        [1, 2, 3, 4, 5].map((id) => ({
+          id,
+          truePriceCents: id * 10_000,
+        })),
+      ),
       itemCountsByTheme: jest.fn().mockResolvedValue(new Map([[1, 500]])),
     } as unknown as CatalogService;
 

@@ -1,11 +1,10 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
 import { InjectRepository } from '@nestjs/typeorm';
-import Redis, { ChainableCommander } from 'ioredis';
 import { EntityManager, In, LessThan, MoreThan, Repository } from 'typeorm';
 
 import { toDto } from 'src/common/serialization/to-dto';
 import { addDays, isoWeekDates, todayUtc } from 'src/common/utils/date.util';
+import { AppRedis } from 'src/redis/redis-commands';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
 import { User } from '../users/entities/user.entity';
 import {
@@ -15,31 +14,23 @@ import {
   LeaderboardScopeParam,
 } from './dto/leaderboard.dto';
 import { DailyScore } from './entities/daily-score.entity';
-import { Friendship } from '../friends/entities/friendship.entity';
 import {
   DAILY_TTL_SECONDS,
-  boardReadyKey,
-  boardRebuildLockKey,
   dailyKey,
-  FRIENDS_TTL_SECONDS,
   friendsKey,
   LeaderboardScope,
   WEEK_TTL_SECONDS,
   weekKey,
 } from './leaderboard.keys';
+import { LeaderboardCacheService } from './leaderboard-cache.service';
+import {
+  execRedisTransaction,
+  fromMember,
+  toMember,
+} from './leaderboard.redis';
 
 /** How many ranked rows the board returns below the podium. */
 const ROWS_LIMIT = 50;
-const REBUILD_LOCK_MS = 10_000;
-const REBUILD_WAIT_MS = 100;
-/**
- * Deliberately longer than `REBUILD_LOCK_MS`. A waiter that gave up inside the
- * lease could time out in the same instant the lock it was waiting on expired,
- * so the one case the wait exists for — a holder that died mid-rebuild — was
- * also the case it could not survive. Waiting past the lease means the loop
- * always gets at least one chance to take over from a dead holder.
- */
-const REBUILD_WAIT_ATTEMPTS = 150;
 
 /**
  * Members are zero-padded user ids, which is what makes Redis's tie-breaking
@@ -54,14 +45,6 @@ const REBUILD_WAIT_ATTEMPTS = 150;
  * consistently and only on ties, which is the kind of bug that reaches
  * production looking like "the leaderboard is occasionally off by one".
  */
-const MEMBER_WIDTH = 10;
-
-// The ORDER BY that reproduces `ZREVRANGE` over `MEMBER_WIDTH`-padded ids is
-// `score DESC, "userId" DESC` — see `ranksFromPostgres`.
-const toMember = (userId: number): string =>
-  String(userId).padStart(MEMBER_WIDTH, '0');
-const fromMember = (member: string): number => Number.parseInt(member, 10);
-
 interface RankedEntry {
   userId: number;
   score: number;
@@ -94,12 +77,11 @@ export class LeaderboardService {
   private readonly logger = new Logger(LeaderboardService.name);
 
   constructor(
-    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    @Inject(REDIS_CLIENT) private readonly redis: AppRedis,
     @InjectRepository(DailyScore)
     private readonly dailyScores: Repository<DailyScore>,
-    @InjectRepository(Friendship)
-    private readonly friendships: Repository<Friendship>,
     @InjectRepository(User) private readonly users: Repository<User>,
+    private readonly cache: LeaderboardCacheService,
   ) {}
 
   // --- writes -------------------------------------------------------------
@@ -117,7 +99,7 @@ export class LeaderboardService {
     await this.persistDailyScore(userId, date, score);
 
     try {
-      await this.syncToRedis(userId, date, score);
+      await this.syncToRedis(userId, date);
     } catch (error) {
       this.logger.warn(
         { err: error, userId, date },
@@ -180,46 +162,82 @@ export class LeaderboardService {
       .execute();
   }
 
-  private async syncToRedis(
-    userId: number,
-    date: string,
-    score: number,
-  ): Promise<void> {
-    const member = toMember(userId);
-    const dKey = dailyKey(date);
+  private async syncToRedis(userId: number, date: string): Promise<void> {
+    await this.dailyScores.manager.transaction(async (manager) => {
+      // A delayed post-commit mirror must not resurrect a score an account
+      // deletion has already removed. `deleteAccount` takes FOR UPDATE on this
+      // same row, so FOR SHARE here orders the two: either the mirror publishes
+      // first and the deletion's cache scrub follows it, or the deletion
+      // commits first and the read below finds nothing to publish.
+      //
+      // Scoped to the one player on purpose. A table-level lock would give the
+      // same ordering, but SHARE conflicts with ROW EXCLUSIVE, so it would
+      // block every daily_score write cluster-wide for as long as the Redis
+      // round trips below take — seconds, when Redis is degraded.
+      await manager.query("SET LOCAL lock_timeout = '3s'");
+      const [owner] = await manager.query<Array<{ id: number }>>(
+        'SELECT id FROM "user" WHERE id = $1 FOR SHARE',
+        [userId],
+      );
+      // The account went away while this mirror was queued. Its rows left with
+      // it via CASCADE and `removeUser` scrubs the serving keys; publishing
+      // anything here would only put the player back.
+      if (!owner) return;
 
-    // The weekly total is recomputed rather than incremented, so a replayed
-    // bet cannot double-count it.
-    const weekTotal = await this.weeklyTotalFor(userId, date);
+      const repository = manager.getRepository(DailyScore);
+      const daily = await repository.findOne({
+        where: { userId, challengeDate: date },
+        select: { score: true },
+      });
+      const weekTotal = await this.weeklyTotalFor(userId, date, manager);
+      const member = toMember(userId);
+      const dKey = dailyKey(date);
+      const wKey = weekKey(new Date(`${date}T00:00:00.000Z`));
+      const transaction = this.redis.multi();
 
-    const wKey = weekKey(new Date(`${date}T00:00:00.000Z`));
-    const transaction = this.redis
-      .multi()
-      .zadd(dKey, score, member)
-      .expire(dKey, DAILY_TTL_SECONDS)
-      .zadd(wKey, weekTotal, member)
-      .expire(wKey, WEEK_TTL_SECONDS);
+      if (daily) transaction.zadd(dKey, daily.score, member);
+      else transaction.zrem(dKey, member);
+      transaction.expire(dKey, DAILY_TTL_SECONDS);
 
-    await execRedisTransaction(transaction, 'leaderboard score mirror');
-    await execRedisTransaction(
-      this.redis
-        .multi()
-        .set(boardReadyKey(dKey), '1', 'EX', DAILY_TTL_SECONDS)
-        .set(boardReadyKey(wKey), '1', 'EX', WEEK_TTL_SECONDS),
-      'leaderboard ready markers',
-    );
+      // Presence, not magnitude, decides membership: a player whose week
+      // legitimately totals zero is still on the board. `rebuild` groups the
+      // same rows and ZADDs whatever the SUM is, including 0, so testing
+      // `> 0` here would evict a player the next rebuild puts straight back.
+      if (weekTotal !== null) transaction.zadd(wKey, weekTotal, member);
+      else transaction.zrem(wKey, member);
+      transaction.expire(wKey, WEEK_TTL_SECONDS);
+
+      await execRedisTransaction(transaction, 'leaderboard score mirror');
+      // Do not create a ready marker here. After a Redis flush this mirror
+      // contains only one player's rows; marking that partial board complete
+      // would suppress the lazy full rebuild. An existing marker can remain,
+      // and an absent one makes the next read publish an exact snapshot.
+    });
   }
 
-  private async weeklyTotalFor(userId: number, date: string): Promise<number> {
+  /**
+   * The player's score across the ISO week, or null when they have no rows in
+   * it at all. The two cases are not the same: a week that sums to zero is a
+   * player who showed up and scored nothing, and they belong on the board at
+   * zero. Only an absent player comes off it.
+   */
+  private async weeklyTotalFor(
+    userId: number,
+    date: string,
+    manager?: EntityManager,
+  ): Promise<number | null> {
     const dates = isoWeekDates(new Date(`${date}T00:00:00.000Z`));
-    const { total } = (await this.dailyScores
+    const repository = manager?.getRepository(DailyScore) ?? this.dailyScores;
+    const row = await repository
       .createQueryBuilder('s')
       .select('COALESCE(SUM(s.score), 0)', 'total')
+      .addSelect('COUNT(*)', 'days')
       .where('s.userId = :userId', { userId })
       .andWhere('s.challengeDate IN (:...dates)', { dates })
-      .getRawOne<{ total: string }>()) ?? { total: '0' };
+      .getRawOne<{ total: string; days: string }>();
 
-    return Number.parseInt(total, 10) || 0;
+    if (!row || (Number.parseInt(row.days, 10) || 0) === 0) return null;
+    return Number.parseInt(row.total, 10) || 0;
   }
 
   // --- reads --------------------------------------------------------------
@@ -236,7 +254,7 @@ export class LeaderboardService {
     userId: number,
     now: Date = new Date(),
   ): Promise<number | null> {
-    const key = await this.resolveKey(scope, userId, now);
+    const key = await this.cache.resolveKey(scope, userId, now);
     const raw = await this.redis.zscore(key, toMember(userId));
     return raw === null ? null : this.rankOfScore(key, raw);
   }
@@ -282,7 +300,7 @@ export class LeaderboardService {
     userId: number,
     now: Date = new Date(),
   ): Promise<Standing | null> {
-    const key = await this.resolveKey(scope, userId, now);
+    const key = await this.cache.resolveKey(scope, userId, now);
     const raw = await this.redis.zscore(key, toMember(userId));
     if (raw === null) return null;
 
@@ -345,7 +363,7 @@ export class LeaderboardService {
     userId: number,
     now: Date = new Date(),
   ): Promise<LeaderboardResponseDto> {
-    const key = await this.resolveKey(scope, userId, now);
+    const key = await this.cache.resolveKey(scope, userId, now);
 
     const [topRaw, myRankZeroBased, myScoreRaw, totalPlayers] =
       await Promise.all([
@@ -463,152 +481,14 @@ export class LeaderboardService {
     return new Map(users.map((user) => [user.id, user]));
   }
 
-  // --- key resolution -----------------------------------------------------
-
-  private async resolveKey(
-    scope: LeaderboardScope,
-    userId: number,
-    now: Date,
-  ): Promise<string> {
-    if (scope === 'friends') return this.buildFriendsKey(userId, now);
-
-    const key = scope === 'week' ? weekKey(now) : dailyKey(todayUtc(now));
-
-    // Redis does not retain an empty ZSET. A separate marker distinguishes a
-    // legitimate empty board from a cache flush, and a short lease prevents a
-    // burst of first reads from all rebuilding the same board from Postgres.
-    await this.ensureBoardReady(scope === 'week' ? 'week' : 'today', now, key);
-
-    return key;
-  }
-
-  private async ensureBoardReady(
-    scope: 'today' | 'week',
-    now: Date,
-    key: string,
-  ): Promise<void> {
-    const readyKey = boardReadyKey(key);
-    const deadline = Date.now() + REBUILD_WAIT_ATTEMPTS * REBUILD_WAIT_MS;
-
-    for (;;) {
-      if ((await this.redis.exists(readyKey)) > 0) return;
-      if (await this.rebuildUnderLease(scope, now, key, readyKey)) return;
-      if (Date.now() >= deadline) break;
-      await new Promise((resolve) => setTimeout(resolve, REBUILD_WAIT_MS));
-    }
-
-    // Every attempt lost the lease, repeatedly, for longer than one rebuild can
-    // hold it. Serve the key as it stands rather than fail the read: this is a
-    // cache with an authoritative table behind it, the next request will try
-    // again, and the hourly repair job is the backstop. A 500 here would turn a
-    // contended cache miss into a broken leaderboard screen.
-    this.logger.warn(
-      `Timed out waiting for a leaderboard rebuild of ${key}; ` +
-        'serving the board as it stands',
-    );
-  }
-
-  /**
-   * Rebuilds `key` if this call wins the lease, and reports whether the board
-   * is ready on return. False means somebody else holds it — the caller waits
-   * and asks again.
-   */
-  private async rebuildUnderLease(
-    scope: 'today' | 'week',
-    now: Date,
-    key: string,
-    readyKey: string,
-  ): Promise<boolean> {
-    const lockKey = boardRebuildLockKey(key);
-    const token = randomUUID();
-    const acquired = await this.redis.set(
-      lockKey,
-      token,
-      'PX',
-      REBUILD_LOCK_MS,
-      'NX',
-    );
-    if (acquired !== 'OK') return false;
-
-    try {
-      // The marker may have appeared between EXISTS and SET.
-      if ((await this.redis.exists(readyKey)) === 0) {
-        await this.rebuild(scope, now);
-      }
-      return true;
-    } finally {
-      await this.redis.eval(
-        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
-        1,
-        lockKey,
-        token,
-      );
-    }
-  }
-
-  /**
-   * The friends board is derived, not maintained: intersect the player's
-   * friends with today's ZSET into a short-lived key. Nothing to invalidate
-   * when a friendship changes.
-   */
-  private async buildFriendsKey(userId: number, now: Date): Promise<string> {
-    const key = friendsKey(userId);
-    const sourceKey = await this.resolveKey('today', userId, now);
-
-    const friends = await this.friendships.find({ where: { userId } });
-    const memberIds = [userId, ...friends.map((f) => f.friendUserId)];
-
-    const scores = await this.redis.zmscore(
-      sourceKey,
-      ...memberIds.map(toMember),
-    );
-
-    const pipeline = this.redis.multi().del(key);
-    memberIds.forEach((id, index) => {
-      const score = scores?.[index];
-      if (score !== null && score !== undefined) {
-        pipeline.zadd(key, Number(score), toMember(id));
-      }
-    });
-    pipeline.expire(key, FRIENDS_TTL_SECONDS);
-    await execRedisTransaction(pipeline, 'friends leaderboard build');
-
-    return key;
-  }
-
   // --- maintenance jobs ---------------------------------------------------
 
-  /** Reconstruct a ZSET from `daily_score`. The recovery path after a flush. */
+  /** Reconstruct the Redis serving layer from authoritative rows. */
   async rebuild(
     scope: 'today' | 'week',
     now: Date = new Date(),
   ): Promise<number> {
-    const dates = scope === 'week' ? isoWeekDates(now) : [todayUtc(now)];
-    const key = scope === 'week' ? weekKey(now) : dailyKey(todayUtc(now));
-    const ttl = scope === 'week' ? WEEK_TTL_SECONDS : DAILY_TTL_SECONDS;
-
-    const totals = await this.dailyScores
-      .createQueryBuilder('s')
-      .select('s.userId', 'userId')
-      .addSelect('SUM(s.score)', 'score')
-      .where('s.challengeDate IN (:...dates)', { dates })
-      .groupBy('s.userId')
-      .getRawMany<{ userId: number; score: string }>();
-
-    // Scores are upsert-only for the lifetime of a daily/weekly key. Merge the
-    // authoritative snapshot instead of deleting first: a concurrent final bet
-    // may mirror a newer member while this query is in flight, and DEL would
-    // erase that committed score until the next repair.
-    const pipeline = this.redis.multi();
-    for (const row of totals) {
-      pipeline.zadd(key, Number.parseInt(row.score, 10), toMember(row.userId));
-    }
-    pipeline.expire(key, ttl);
-    await execRedisTransaction(pipeline, `leaderboard rebuild ${key}`);
-    await this.redis.set(boardReadyKey(key), '1', 'EX', ttl);
-
-    this.logger.log(`Rebuilt ${key} from ${totals.length} rows`);
-    return totals.length;
+    return this.cache.rebuild(scope, now);
   }
 
   /**
@@ -689,22 +569,4 @@ const parseWithScores = (raw: string[], startRank: number): RankedEntry[] => {
     });
   }
   return entries;
-};
-
-/** ioredis resolves EXEC even when an individual command returned an error. */
-const execRedisTransaction = async (
-  transaction: ChainableCommander,
-  label: string,
-): Promise<void> => {
-  const results = await transaction.exec();
-  if (!results) throw new Error(`${label}: Redis transaction was aborted`);
-
-  const errors = results
-    .map(([error]) => error)
-    .filter((error): error is Error => error instanceof Error);
-  if (errors.length > 0) {
-    throw new Error(
-      `${label}: ${errors.map((error) => error.message).join('; ')}`,
-    );
-  }
 };

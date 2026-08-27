@@ -199,6 +199,25 @@ export class AdminCatalogService {
 
     const { digest, photoUrl } = await this.storePhoto(photo);
 
+    // No rollback delete on failure. The store is content-addressed, so two
+    // uploads of the same photograph share one path: a cleanup here would run
+    // `exists(sourceHash)` against a competing request that has passed its own
+    // duplicate check but not yet committed, see no reference, and delete the
+    // blob out from under the row that request is about to write. `MediaGcService`
+    // is the reclamation path and is built for exactly this — it only collects
+    // blobs that are both unreferenced and older than MEDIA_ORPHAN_GRACE_MS, so
+    // an in-flight write is never the one it takes. The cost of leaving this to
+    // the sweep is one orphaned blob per failed create, for up to a day.
+    return this.createStoredItem(input, theme, title, digest, photoUrl);
+  }
+
+  private async createStoredItem(
+    input: ItemInput,
+    theme: Theme,
+    title: string,
+    digest: string,
+    photoUrl: string,
+  ): Promise<Item> {
     // The photograph is the item's identity, so the same file twice is the same
     // item — the unique index would refuse it anyway, and a plain conflict says
     // so far better than a constraint violation.

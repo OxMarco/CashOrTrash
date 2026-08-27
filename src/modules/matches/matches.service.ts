@@ -18,6 +18,8 @@ import {
 import { toDto } from 'src/common/serialization/to-dto';
 import { AppConfig } from 'src/config/configuration';
 import { CatalogService } from '../catalog/catalog.service';
+import { deriveSliderBoundsSet } from '../catalog/slider';
+import { CURRENT_SCORING } from '../scoring/constants';
 import { GameSession } from '../sessions/entities/game-session.entity';
 import { SessionRound } from '../sessions/entities/session-round.entity';
 import { User } from '../users/entities/user.entity';
@@ -64,14 +66,23 @@ export class MatchesService {
       // the leaderboard, and it protects both players regardless.
       { reserveDaily: true, excludeSeenBy: hostUserId },
     );
+    const matchId = randomUUID();
+    const items = await this.catalog.findItemsInOrder(itemIds);
+    const sliderBounds = deriveSliderBoundsSet(
+      { id: matchId, mode: 'h2h', dailyDate: null, matchId },
+      items,
+      this.app.sliderSeedSecret,
+    );
 
     // Retry on collision rather than pre-checking: the unique index decides.
     for (let attempt = 0; attempt < CODE_ATTEMPTS; attempt++) {
       try {
         const match = await this.matches.save(
           this.matches.create({
-            id: randomUUID(),
+            id: matchId,
             itemIds,
+            ...sliderBounds,
+            scoringVersion: CURRENT_SCORING.version,
             themeId: theme.id,
             inviteCode: generateCode(),
             hostUserId,

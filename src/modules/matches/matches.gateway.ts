@@ -13,12 +13,12 @@ import {
   WsException,
 } from '@nestjs/websockets';
 import { isUUID } from 'class-validator';
-import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
 import { Server, Socket } from 'socket.io';
 import { Repository } from 'typeorm';
 
 import { AuthConfig } from 'src/config/configuration';
+import { AppRedis } from 'src/redis/redis-commands';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
 import { AccessTokenPayload, TokenType } from '../auth/auth.types';
 import { User } from '../users/entities/user.entity';
@@ -37,16 +37,6 @@ const MAX_MATCH_ROOMS_PER_SOCKET = 8;
 const MAX_SOCKETS_PER_USER = 5;
 const CONNECTION_KEY_TTL_SLACK_SECONDS = 60;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
-
-const ACQUIRE_CONNECTION = `
-  redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1])
-  if redis.call('zcard', KEYS[1]) >= tonumber(ARGV[2]) then
-    return 0
-  end
-  redis.call('zadd', KEYS[1], ARGV[3], ARGV[4])
-  redis.call('expire', KEYS[1], ARGV[5])
-  return 1
-`;
 
 interface SocketData {
   userId: number;
@@ -96,7 +86,7 @@ export class MatchesGateway
     private readonly config: ConfigService,
     private readonly matches: MatchesReadService,
     @InjectRepository(User) private readonly users: Repository<User>,
-    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    @Inject(REDIS_CLIENT) private readonly redis: AppRedis,
   ) {}
 
   handleConnection(client: Socket): Promise<void> {
@@ -159,9 +149,7 @@ export class MatchesGateway
       const keyTtlSeconds =
         Math.ceil((expiresAtMs - now) / 1000) +
         CONNECTION_KEY_TTL_SLACK_SECONDS;
-      const acquired = await this.redis.eval(
-        ACQUIRE_CONNECTION,
-        1,
+      const acquired = await this.redis.acquireSocketConnection(
         connectionKey,
         now,
         MAX_SOCKETS_PER_USER,

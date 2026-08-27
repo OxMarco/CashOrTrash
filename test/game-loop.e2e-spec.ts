@@ -2,7 +2,6 @@ import { ConfigService } from '@nestjs/config';
 
 import { addDays, todayUtc } from '../src/common/utils/date.util';
 import { AppConfig } from '../src/config/configuration';
-import { deriveSlider, sliderSeed } from '../src/modules/catalog/slider';
 import { dailyKey } from '../src/modules/leaderboard/leaderboard.keys';
 import { Api } from './support/api-client';
 import { playRound, registerPlayer } from './support/players';
@@ -36,8 +35,8 @@ describe('the game loop', () => {
    *
    * Two cases here have to place a bet *before* calling `/current`, which is
    * the only way to sit outside the shot clock — so the bounds cannot be read
-   * off the response. They are not on the item either: the server draws them
-   * per round now, so this draws the same ones from the same seed.
+   * off the response. They are pinned on the session when it is created, which
+   * lets this read the exact contract without re-running secret-keyed logic.
    *
    * Worth being exact rather than approximate. An arbitrary bet used to pass
    * only because it happened to land inside the fixture's slider, and when that
@@ -48,30 +47,15 @@ describe('the game loop', () => {
     sessionId: string,
   ): Promise<{ loCents: number; hiCents: number }> {
     const [row] = await ctx.dataSource.query(
-      `SELECT s."mode", s."dailyDate", s."matchId", i.id AS "itemId",
-              i."truePriceCents"
-       FROM game_session s
-       JOIN item i ON i.id = s."itemIds"[1]
-       WHERE s.id = $1`,
+      `SELECT "sliderMinCents", "sliderMaxCents"
+       FROM game_session WHERE id = $1`,
       [sessionId],
     );
 
-    const bounds = deriveSlider(
-      Number(row.truePriceCents),
-      sliderSeed(
-        {
-          mode: row.mode,
-          id: sessionId,
-          dailyDate: row.dailyDate,
-          matchId: row.matchId,
-        },
-        Number(row.itemId),
-        ctx.app.get(ConfigService).getOrThrow<AppConfig>('app')
-          .sliderSeedSecret,
-      ),
-    );
-
-    return { loCents: bounds.sliderMinCents, hiCents: bounds.sliderMaxCents };
+    return {
+      loCents: Number(row.sliderMinCents[0]),
+      hiCents: Number(row.sliderMaxCents[0]),
+    };
   }
 
   describe('starting a session', () => {
@@ -126,6 +110,24 @@ describe('the game loop', () => {
       const response = await player.api.post('/v1/sessions', { mode: 'quick' });
 
       expect(response.status).toBe(400);
+    });
+
+    it('pins slider geometry and scoring rules when the session starts', async () => {
+      const player = await registerPlayer(api, 'loop-device-pinned-config');
+      const response = await player.api.post('/v1/sessions', {
+        mode: 'quick',
+        themeSlug: 'everyday-stuff',
+      });
+
+      const [row] = await ctx.dataSource.query(
+        `SELECT cardinality("sliderMinCents")::int AS mins,
+                cardinality("sliderMaxCents")::int AS maxes,
+                "scoringVersion"
+         FROM game_session WHERE id = $1`,
+        [response.body.id],
+      );
+
+      expect(row).toEqual({ mins: 5, maxes: 5, scoringVersion: 'v2' });
     });
 
     it('leaves exactly one active quick session after concurrent starts', async () => {

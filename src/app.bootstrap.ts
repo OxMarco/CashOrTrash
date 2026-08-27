@@ -1,4 +1,3 @@
-import { ValidationPipe } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
 import fastifyHelmet from '@fastify/helmet';
@@ -9,6 +8,7 @@ import { MAX_UPLOAD_BYTES } from './modules/admin/admin.controller';
 import { RedisIoAdapter } from './common/adapters/redis-io.adapter';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { DtoSerializerInterceptor } from './common/interceptors/dto-serializer.interceptor';
+import { AppValidationPipe } from './common/pipes/app-validation.pipe';
 import { AppConfig } from './config/configuration';
 
 /**
@@ -137,14 +137,7 @@ export async function configureApp(
     maxAge: 86_400,
   });
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: { enableImplicitConversion: true },
-    }),
-  );
+  app.useGlobalPipes(new AppValidationPipe());
 
   /**
    * Layer 2 of the three guarding `truePriceCents`. `excludeExtraneousValues`

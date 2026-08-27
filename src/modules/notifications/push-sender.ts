@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Expo, ExpoPushMessage, ExpoPushTicket } from 'expo-server-sdk';
+import { Agent } from 'undici';
 
 import { PushConfig } from 'src/config/configuration';
 
@@ -58,13 +60,34 @@ export class LoggingPushSender extends PushSender {
   }
 }
 
-const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
-const EXPO_BATCH_SIZE = 100;
+/** Owns the official SDK and its bounded HTTP connection pool. */
+@Injectable()
+export class ExpoGateway implements OnModuleDestroy {
+  private readonly agent: Agent;
+  private readonly expo: Expo;
 
-type ExpoTicket = {
-  status?: unknown;
-  details?: { error?: unknown };
-};
+  constructor(config: ConfigService) {
+    const timeoutMs = config.getOrThrow<PushConfig>('push').timeoutMs;
+    this.agent = new Agent({
+      connectTimeout: timeoutMs,
+      headersTimeout: timeoutMs,
+      bodyTimeout: timeoutMs,
+    });
+    this.expo = new Expo({ httpAgent: this.agent });
+  }
+
+  chunk(messages: ExpoPushMessage[]): ExpoPushMessage[][] {
+    return this.expo.chunkPushNotifications(messages);
+  }
+
+  send(messages: ExpoPushMessage[]): Promise<ExpoPushTicket[]> {
+    return this.expo.sendPushNotificationsAsync(messages);
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.agent.close();
+  }
+}
 
 /**
  * Production delivery through Expo's push gateway.
@@ -78,11 +101,9 @@ type ExpoTicket = {
 @Injectable()
 export class ExpoPushSender extends PushSender {
   private readonly logger = new Logger(ExpoPushSender.name);
-  private readonly timeoutMs: number;
 
-  constructor(config: ConfigService) {
+  constructor(private readonly expo: ExpoGateway) {
     super();
-    this.timeoutMs = config.getOrThrow<PushConfig>('push').timeoutMs;
   }
 
   async send(
@@ -93,12 +114,22 @@ export class ExpoPushSender extends PushSender {
     let failed = 0;
     const invalidTokens: string[] = [];
 
-    for (let offset = 0; offset < tokens.length; offset += EXPO_BATCH_SIZE) {
-      const batch = tokens.slice(offset, offset + EXPO_BATCH_SIZE);
+    const messages: ExpoPushMessage[] = tokens.map((target) => ({
+      to: target.token,
+      title: message.title,
+      body: message.body,
+      data: message.data,
+      sound: 'default',
+    }));
+    let offset = 0;
 
-      let tickets: ExpoTicket[];
+    for (const chunk of this.expo.chunk(messages)) {
+      const batch = tokens.slice(offset, offset + chunk.length);
+      offset += chunk.length;
+
+      let tickets: ExpoPushTicket[];
       try {
-        tickets = await this.deliver(batch, message);
+        tickets = await this.expo.send(chunk);
       } catch (error) {
         failed += batch.length;
         this.logger.warn(
@@ -108,7 +139,13 @@ export class ExpoPushSender extends PushSender {
         continue;
       }
 
-      tickets.forEach((raw: ExpoTicket, index: number) => {
+      if (tickets.length !== batch.length) {
+        failed += batch.length;
+        this.logger.warn('Expo push gateway returned malformed tickets');
+        continue;
+      }
+
+      tickets.forEach((raw, index) => {
         if (raw?.status === 'ok') {
           sent += 1;
         } else if (raw?.details?.error === 'DeviceNotRegistered') {
@@ -122,38 +159,5 @@ export class ExpoPushSender extends PushSender {
     }
 
     return { sent, invalidTokens, failed };
-  }
-
-  /** One batch, or a throw the caller turns into a count. */
-  private async deliver(
-    batch: PushToken[],
-    message: PushMessage,
-  ): Promise<ExpoTicket[]> {
-    const response = await fetch(EXPO_PUSH_URL, {
-      method: 'POST',
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(
-        batch.map((target) => ({
-          to: target.token,
-          title: message.title,
-          body: message.body,
-          data: message.data,
-          sound: 'default',
-        })),
-      ),
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Expo push gateway answered ${response.status}`);
-    }
-    const body = (await response.json()) as { data?: unknown };
-    if (!Array.isArray(body.data) || body.data.length !== batch.length) {
-      throw new Error('Expo push gateway returned malformed tickets');
-    }
-    return body.data as ExpoTicket[];
   }
 }

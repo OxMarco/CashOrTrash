@@ -257,3 +257,18 @@ export function sliderSeed(
 
   return createHmac('sha256', secret).update(visibleScope).digest('hex');
 }
+
+/** Immutable slider geometry stored with a shared challenge or session. */
+export function deriveSliderBoundsSet(
+  scope: SliderScope,
+  items: Array<{ id: number; truePriceCents: number }>,
+  secret: string,
+): { sliderMinCents: number[]; sliderMaxCents: number[] } {
+  const bounds = items.map((item) =>
+    deriveSlider(item.truePriceCents, sliderSeed(scope, item.id, secret)),
+  );
+  return {
+    sliderMinCents: bounds.map((bound) => bound.sliderMinCents),
+    sliderMaxCents: bounds.map((bound) => bound.sliderMaxCents),
+  };
+}

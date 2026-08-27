@@ -2,7 +2,6 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  GoneException,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,21 +9,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ThrottlerException } from '@nestjs/throttler';
-import { randomUUID } from 'node:crypto';
-import {
-  DataSource,
-  EntityManager,
-  In,
-  IsNull,
-  MoreThan,
-  Repository,
-} from 'typeorm';
+import { DataSource, EntityManager, In, IsNull, Repository } from 'typeorm';
 
-import {
-  isPgError,
-  PG_UNIQUE_VIOLATION,
-} from 'src/common/database/pg-error-codes';
 import { toDto } from 'src/common/serialization/to-dto';
 import { todayUtc } from 'src/common/utils/date.util';
 import { AppConfig } from 'src/config/configuration';
@@ -36,9 +22,7 @@ import { DEFAULT_LANGUAGE, Language } from '../catalog/language.constants';
 import { deriveSlider, SliderBounds, sliderSeed } from '../catalog/slider';
 import { Currency, DEFAULT_CURRENCY } from '../currency/currency.constants';
 import { CurrencyService } from '../currency/currency.service';
-import { DailyService } from '../daily/daily.service';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
-import { inviteHasExpired } from '../matches/match-expiry';
 import { MatchesReadService } from '../matches/matches-read.service';
 import {
   MatchReconciliation,
@@ -46,6 +30,7 @@ import {
 } from '../matches/matches-reconciliation.service';
 import { PricingService } from '../scoring/pricing.service';
 import { ScoringService } from '../scoring/scoring.service';
+import { CURRENT_SCORING } from '../scoring/constants';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
 import {
@@ -69,6 +54,7 @@ import {
   SessionCompletedEvent,
 } from './events/session.events';
 import { buildShareText } from './share-text';
+import { SessionCreationService } from './session-creation.service';
 
 /** A day, which is far past any reading of "how long did that round take". */
 const MAX_ELAPSED_MS = 24 * 60 * 60 * 1000;
@@ -92,7 +78,7 @@ export class SessionsService {
     private readonly rounds: Repository<SessionRound>,
     private readonly dataSource: DataSource,
     private readonly catalog: CatalogService,
-    private readonly daily: DailyService,
+    private readonly creation: SessionCreationService,
     private readonly scoring: ScoringService,
     private readonly pricing: PricingService,
     private readonly currency: CurrencyService,
@@ -112,223 +98,7 @@ export class SessionsService {
     userId: number,
     dto: CreateSessionDto,
   ): Promise<SessionDto> {
-    switch (dto.mode) {
-      case GameMode.DAILY:
-        return this.createOrResumeDaily(userId);
-      case GameMode.QUICK:
-        return this.createQuick(userId, dto.themeSlug);
-      case GameMode.H2H:
-        return this.createOrResumeH2h(userId, dto.inviteCode);
-    }
-  }
-
-  /**
-   * Idempotent, which is what makes Home's "Continue · round 3" work without a
-   * second endpoint: asking for today's daily twice returns the same session.
-   */
-  private async createOrResumeDaily(userId: number): Promise<SessionDto> {
-    const date = todayUtc();
-
-    const existing = await this.sessions.findOne({
-      where: { userId, mode: GameMode.DAILY, dailyDate: date },
-    });
-    if (existing) return this.toSessionDto(existing, true);
-
-    const challenge = await this.daily.getOrCreate(date);
-
-    try {
-      const created = await this.sessions.save(
-        this.sessions.create({
-          id: randomUUID(),
-          userId,
-          mode: GameMode.DAILY,
-          dailyDate: date,
-          themeId: null,
-          itemIds: challenge.itemIds,
-        }),
-      );
-      return this.toSessionDto(created, false);
-    } catch (error) {
-      // The partial unique index caught a concurrent double-tap on "Play".
-      if (isPgError(error, PG_UNIQUE_VIOLATION)) {
-        const winner = await this.sessions.findOneOrFail({
-          where: { userId, mode: GameMode.DAILY, dailyDate: date },
-        });
-        return this.toSessionDto(winner, true);
-      }
-      throw error;
-    }
-  }
-
-  private async createQuick(
-    userId: number,
-    themeSlug?: string,
-  ): Promise<SessionDto> {
-    if (!themeSlug) {
-      throw new BadRequestException('themeSlug is required for a quick round');
-    }
-
-    const created = await this.dataSource.transaction(async (manager) => {
-      // A user row is the stable lock shared by every quick-session create,
-      // including when no active session exists yet. Serialising here makes
-      // "retire then insert" one per-player operation across every replica.
-      const player = await manager.getRepository(User).findOne({
-        where: { id: userId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!player) throw new NotFoundException('Player not found');
-
-      // Count under the same lock, or a burst can have every request observe
-      // the last available budget slot before any of them records its session.
-      await this.enforceRoundBudget(userId, manager);
-
-      const theme = await this.catalog.getThemeBySlug(themeSlug);
-      const itemIds = await this.catalog.drawItemIds(
-        theme.isMystery ? null : theme.id,
-        this.app.roundsPerSession,
-        // Quick rounds are explicitly *not* reproducible — a fresh seed each time.
-        `quick:${userId}:${randomUUID()}`,
-        // The reveal at the end of every round is an answer, and a quick round is
-        // the cheapest way to collect one. Hold back what a daily still needs to
-        // ask, and what this player has already been shown.
-        { reserveDaily: true, excludeSeenBy: userId },
-      );
-
-      const sessionRepo = manager.getRepository(GameSession);
-      await sessionRepo.update(
-        { userId, mode: GameMode.QUICK, status: SessionStatus.ACTIVE },
-        { status: SessionStatus.ABANDONED },
-      );
-
-      return sessionRepo.save(
-        sessionRepo.create({
-          id: randomUUID(),
-          userId,
-          mode: GameMode.QUICK,
-          themeId: theme.id,
-          itemIds,
-        }),
-      );
-    });
-
-    return this.toSessionDto(created, false);
-  }
-
-  /**
-   * The ceiling on how fast one account can be dealt new items.
-   *
-   * The throttler above this caps requests; this caps *rounds*, which is the
-   * unit that matters — every completed round hands back a true price, so an
-   * unmetered round is a catalogue export with a progress bar. It does not make
-   * harvesting impossible (the cooldown expires, and patience beats a rate
-   * limit); it makes the sweep long enough to notice.
-   *
-   * Counted across quick *and* head-to-head, because the budget is about
-   * reveals and those two modes reveal identically. Gating quick alone left the
-   * cheaper door open: `POST /matches` allows 20 a minute and each match backs
-   * a five-round session, so a limit written as 30 rounds an hour was really
-   * thousands. The daily is exempt — it is one session a day by unique index,
-   * which is a tighter budget than this one could express.
-   *
-   * Deliberately the first thing a *creating* path does, and never on a
-   * resuming one: it runs before the theme lookup and before the previous
-   * session is retired, so a player who is over budget keeps the round they
-   * were in the middle of and can still return to a match already under way.
-   */
-  private async enforceRoundBudget(
-    userId: number,
-    manager?: EntityManager,
-  ): Promise<void> {
-    if (this.app.quickSessionsPerHour <= 0) return;
-
-    const sessions = manager?.getRepository(GameSession) ?? this.sessions;
-    const recent = await sessions.count({
-      where: {
-        userId,
-        mode: In([GameMode.QUICK, GameMode.H2H]),
-        createdAt: MoreThan(new Date(Date.now() - 3_600_000)),
-      },
-    });
-
-    if (recent >= this.app.quickSessionsPerHour) {
-      // A ThrottlerException so this lands as a 429 through the same filter,
-      // and the client has one vocabulary for "slow down" rather than two.
-      throw new ThrottlerException('Too many rounds — take a breather');
-    }
-  }
-
-  private async createOrResumeH2h(
-    userId: number,
-    inviteCode?: string,
-  ): Promise<SessionDto> {
-    if (!inviteCode) {
-      throw new BadRequestException(
-        'inviteCode is required for a head-to-head',
-      );
-    }
-
-    const match = await this.matches.getByInviteCodeForPlayer(
-      inviteCode,
-      userId,
-    );
-
-    const existing = await this.sessions.findOne({
-      where: { userId, matchId: match.id },
-    });
-    if (existing) return this.toSessionDto(existing, true);
-
-    // Below the resume above, and deliberately so. An invite that aged out is
-    // refused a *new* deal, but a host who is three rounds into one when the
-    // deadline passes keeps their game: locking someone out of rounds they
-    // have already played is a worse answer to a friend who never showed up
-    // than simply letting the match finish unanswered.
-    if (inviteHasExpired(match, this.app.matchInviteTtlDays)) {
-      throw new GoneException('This challenge has expired');
-    }
-
-    try {
-      // The same user-row lock `createQuick` takes, and for the same reason:
-      // counting the budget outside one lets a burst of five taps each observe
-      // the last free slot before any of them has recorded its session. The
-      // budget is per *reveal* and these two modes reveal identically, so the
-      // door they are counted through has to be equally hard to hold open.
-      //
-      // Below the resume above, so rejoining a match in progress is always free
-      // and only a *new* five-item deal spends budget.
-      const created = await this.dataSource.transaction(async (manager) => {
-        const player = await manager.getRepository(User).findOne({
-          where: { id: userId },
-          lock: { mode: 'pessimistic_write' },
-        });
-        if (!player) throw new NotFoundException('Player not found');
-
-        await this.enforceRoundBudget(userId, manager);
-
-        const sessionRepo = manager.getRepository(GameSession);
-        return sessionRepo.save(
-          sessionRepo.create({
-            id: randomUUID(),
-            userId,
-            mode: GameMode.H2H,
-            themeId: match.themeId,
-            matchId: match.id,
-            // Both players get the identical ordered set — "best of 5, same items".
-            itemIds: match.itemIds,
-          }),
-        );
-      });
-      return this.toSessionDto(created, false);
-    } catch (error) {
-      if (!isPgError(error, PG_UNIQUE_VIOLATION)) throw error;
-
-      // A concurrent double-tap won the (userId, matchId) unique index. Read
-      // outside the transaction above, which the violation has already aborted.
-      const winner = await this.sessions.findOne({
-        where: { userId, matchId: match.id },
-      });
-      if (!winner) throw error;
-      return this.toSessionDto(winner, true);
-    }
+    return this.creation.createOrResume(userId, dto);
   }
 
   // --- gameplay -----------------------------------------------------------
@@ -336,7 +106,15 @@ export class SessionsService {
   async getCurrentRound(
     sessionId: string,
     userId: number,
-    currency: Currency = DEFAULT_CURRENCY,
+    /**
+     * The currency the client asked for, or undefined when it expressed no
+     * preference. The distinction matters: an explicit choice deals — or
+     * re-deals — the round in that currency, while an absent one leaves an
+     * already-dealt round on the quote it was dealt with. Collapsing the two
+     * would make a parameterless prefetch pin the round to dollars and then
+     * reject the player's euro bet.
+     */
+    currency: Currency | undefined = undefined,
     language: Language = DEFAULT_LANGUAGE,
     /**
      * How many times this call has already restarted after losing the stamping
@@ -368,6 +146,8 @@ export class SessionsService {
     // than a fresh ten seconds.
     if (session.currentServedAt === null) {
       const servedAt = new Date();
+      const dealtIn = currency ?? DEFAULT_CURRENCY;
+      const exchangeRate = this.currency.rateFor(dealtIn);
       const stamped = await this.sessions.update(
         {
           id: session.id,
@@ -375,10 +155,16 @@ export class SessionsService {
           currentIndex: session.currentIndex,
           currentServedAt: IsNull(),
         },
-        { currentServedAt: servedAt },
+        {
+          currentServedAt: servedAt,
+          currentCurrency: dealtIn,
+          currentExchangeRate: exchangeRate,
+        },
       );
       if (stamped.affected === 1) {
         session.currentServedAt = servedAt;
+        session.currentCurrency = dealtIn;
+        session.currentExchangeRate = exchangeRate;
       } else {
         // Lost the race to a concurrent GET. Whatever it wrote is the stamp the
         // deadline is measured from, so read it back rather than counting down
@@ -390,6 +176,8 @@ export class SessionsService {
         });
         if (current.currentIndex === session.currentIndex) {
           session.currentServedAt = current.currentServedAt;
+          session.currentCurrency = current.currentCurrency;
+          session.currentExchangeRate = current.currentExchangeRate;
         } else {
           // A bet, not another GET, won the race. Everything already resolved
           // above belongs to the old index, so continuing would hand the client
@@ -415,10 +203,72 @@ export class SessionsService {
       }
     }
 
+    // Two cases converge here. A row created before round quotes were
+    // persisted carries a deal timestamp with no currency and needs its first
+    // post-deploy read to pin one. And a player who switches currency mid-round
+    // re-deals it: the response below carries the new grid, so the quote it was
+    // built from has to be the one a later bet is checked against. Switching is
+    // not a way to buy time — `currentServedAt` is stamped once above and is
+    // deliberately left alone here, so the shot clock keeps running.
+    const wantsRepin =
+      !session.currentCurrency ||
+      !session.currentExchangeRate ||
+      (currency !== undefined && currency !== session.currentCurrency);
+
+    if (wantsRepin) {
+      const target = currency ?? session.currentCurrency ?? DEFAULT_CURRENCY;
+      const exchangeRate = this.currency.rateFor(target);
+      // Compare-and-set on the quote this request actually read, so a
+      // concurrent switch cannot be silently clobbered by a slower one.
+      const quoted = await this.sessions.update(
+        {
+          id: session.id,
+          status: SessionStatus.ACTIVE,
+          currentIndex: session.currentIndex,
+          currentCurrency: session.currentCurrency ?? IsNull(),
+        },
+        { currentCurrency: target, currentExchangeRate: exchangeRate },
+      );
+      if (quoted.affected === 1) {
+        session.currentCurrency = target;
+        session.currentExchangeRate = exchangeRate;
+      } else {
+        const current = await this.sessions.findOneOrFail({
+          where: { id: session.id },
+        });
+        if (current.currentIndex !== session.currentIndex) {
+          if (attempt >= MAX_ROUND_RESTARTS) {
+            throw new ConflictException(
+              'This round moved on while it was being fetched — ask again',
+            );
+          }
+          return this.getCurrentRound(
+            sessionId,
+            userId,
+            currency,
+            language,
+            attempt + 1,
+          );
+        }
+        session.currentCurrency = current.currentCurrency;
+        session.currentExchangeRate = current.currentExchangeRate;
+      }
+    }
+
     const clock = this.roundClock(session);
     const copy = await this.catalog.localise(language, [item.id]);
+    const pinnedCurrency =
+      session.currentCurrency ?? currency ?? DEFAULT_CURRENCY;
+    const exchangeRate =
+      session.currentExchangeRate ?? this.currency.rateFor(pinnedCurrency);
 
-    const grid = this.gridFor(session, item, currency);
+    const grid = this.gridFor(
+      session,
+      item,
+      session.currentIndex,
+      pinnedCurrency,
+      exchangeRate,
+    );
     const span = grid.max - grid.min;
 
     return toDto(CurrentRoundDto, {
@@ -429,7 +279,7 @@ export class SessionsService {
       title: copy.title(item),
       conditionLine: copy.conditionLine(item),
       photoUrl: item.photoUrl,
-      currency,
+      currency: pinnedCurrency,
       sliderMinCents: grid.min,
       sliderMaxCents: grid.max,
       incrementCents: grid.increment,
@@ -459,7 +309,9 @@ export class SessionsService {
       // Dealt with the round, not fetched once and cached, so the curve a
       // player is shown is always the one their bet will be scored against —
       // including across a deploy that retunes it mid-session.
-      multiplierCurve: this.scoring.curveFor(),
+      multiplierCurve: this.scoring.curveFor(
+        session.scoringVersion ?? CURRENT_SCORING.version,
+      ),
     });
   }
 
@@ -545,7 +397,7 @@ export class SessionsService {
         throw new BadRequestException('No such round in this session');
       }
 
-      const currency = dto.currency ?? DEFAULT_CURRENCY;
+      const requestedCurrency = dto.currency ?? DEFAULT_CURRENCY;
       const itemId = session.itemIds[roundIndex];
       const item = await manager.getRepository(Item).findOneOrFail({
         where: { id: itemId },
@@ -562,7 +414,18 @@ export class SessionsService {
         where: { sessionId, roundIndex },
       });
       if (stored) {
-        return this.buildReveal(session, stored, item, true, currency, copy);
+        const replayCurrency = stored.currency ?? requestedCurrency;
+        const replayRate =
+          stored.exchangeRate ?? this.currency.rateFor(replayCurrency);
+        return this.buildReveal(
+          session,
+          stored,
+          item,
+          true,
+          replayCurrency,
+          replayRate,
+          copy,
+        );
       }
 
       if (session.status !== SessionStatus.ACTIVE) {
@@ -574,6 +437,26 @@ export class SessionsService {
         );
       }
 
+      const currency = session.currentCurrency ?? requestedCurrency;
+      if (
+        session.currentCurrency !== null &&
+        requestedCurrency !== session.currentCurrency
+      ) {
+        throw new BadRequestException(
+          `This round was dealt in ${session.currentCurrency}. Re-fetch it ` +
+            `with ?currency=${requestedCurrency} to play it in ` +
+            `${requestedCurrency}.`,
+        );
+      }
+      // Whether the grid below comes from the quote the round was dealt with or
+      // from a rate read just now. Only the pinned case can be held to exact
+      // snapping — see `validateBet`.
+      const quotePinned = session.currentExchangeRate !== null;
+      const exchangeRate =
+        session.currentExchangeRate ?? this.currency.rateFor(currency);
+      session.currentCurrency = currency;
+      session.currentExchangeRate = exchangeRate;
+
       // 2. Read the clock before anything else. A round that ran out of time is
       //    no longer being validated — it is being closed — so the checks below
       //    are skipped rather than allowed to 400 a player out of a round they
@@ -582,26 +465,44 @@ export class SessionsService {
       if (!clock.expired) {
         // Validate the bet on the slider the player was actually given — the
         // item's own, expressed in the currency they bet in.
-        this.validateBet(dto, item, session, currency);
+        this.validateBet(
+          dto,
+          item,
+          session,
+          roundIndex,
+          currency,
+          exchangeRate,
+          quotePinned,
+        );
       }
       // Then bring it back to the dollars everything downstream is denominated
       // in. Clamped, which is what makes the expired path above safe.
-      const bet = this.toUsdBet(dto, session, item, currency);
+      const bet = this.toUsdBet(
+        dto,
+        session,
+        item,
+        roundIndex,
+        currency,
+        exchangeRate,
+      );
 
       // 3. Score. Pure, no I/O.
       const themeBonusPct = session.themeId
         ? (await this.catalog.getThemeById(session.themeId)).bonusPct
         : 0;
 
-      const bounds = this.boundsFor(session, item);
-      const scored = this.scoring.score({
-        truePriceCents: item.truePriceCents,
-        loCents: bet.loCents,
-        hiCents: bet.hiCents,
-        sliderMinCents: bounds.sliderMinCents,
-        sliderMaxCents: bounds.sliderMaxCents,
-        themeBonusPct,
-      });
+      const bounds = this.boundsFor(session, item, roundIndex);
+      const scored = this.scoring.score(
+        {
+          truePriceCents: item.truePriceCents,
+          loCents: bet.loCents,
+          hiCents: bet.hiCents,
+          sliderMinCents: bounds.sliderMinCents,
+          sliderMaxCents: bounds.sliderMaxCents,
+          themeBonusPct,
+        },
+        session.scoringVersion ?? CURRENT_SCORING.version,
+      );
 
       // Out of time scores nothing, however good the range was. The multiplier
       // survives because the player was shown it — the same reasoning that
@@ -625,26 +526,21 @@ export class SessionsService {
         elapsedMs: clock.elapsedMs,
         errorPct: outcome.errorPct,
         scoringVersion: outcome.scoringVersion,
+        currency,
+        exchangeRate,
       });
 
-      try {
-        await manager.getRepository(SessionRound).insert(round);
-      } catch (error) {
-        if (isPgError(error, PG_UNIQUE_VIOLATION)) {
-          const winner = await manager
-            .getRepository(SessionRound)
-            .findOneOrFail({
-              where: { sessionId, roundIndex },
-            });
-          return this.buildReveal(session, winner, item, true, currency, copy);
-        }
-        throw error;
-      }
+      // The locked session row serialises submits, and the stored-round check
+      // above handles retries before this insert. Let an unexpected constraint
+      // failure abort cleanly rather than querying inside an aborted PG tx.
+      await manager.getRepository(SessionRound).insert(round);
 
       // 5. Advance the session.
       session.totalScore += outcome.points;
       session.currentIndex += 1;
       session.currentServedAt = null;
+      session.currentCurrency = null;
+      session.currentExchangeRate = null;
 
       // 6. Close it out on the last round.
       const isComplete = session.currentIndex >= session.itemIds.length;
@@ -715,7 +611,15 @@ export class SessionsService {
         );
       }
 
-      return this.buildReveal(session, round, item, false, currency, copy);
+      return this.buildReveal(
+        session,
+        round,
+        item,
+        false,
+        currency,
+        exchangeRate,
+        copy,
+      );
     });
 
     for (const update of matchUpdates) {
@@ -743,16 +647,45 @@ export class SessionsService {
   /**
    * The slider this round is played on, in dollars.
    *
-   * Drawn rather than stored, so an item a player has seen before does not come
-   * back on the scale they remember. Deterministic in the session's shared-fate
-   * scope — see `sliderSeed` for why that is the seed and not the session id.
+   * Stored when the shared challenge or session is created, so an item a player
+   * has seen before does not come back on a remembered scale and a later secret
+   * rotation cannot change a round already in flight. Legacy rows fall back to
+   * the deterministic shared-fate seed — see `sliderSeed`.
    *
    * Every read of the bounds goes through here. They are consulted three times
    * on the way through a round (dealing it, clamping the bet, scoring it), and
    * a bet clamped to one scale but scored against another is a wrong result
    * nobody would see.
    */
-  private boundsFor(session: GameSession, item: Item): SliderBounds {
+  private boundsFor(
+    session: GameSession,
+    item: Item,
+    /**
+     * The round's own position, passed in rather than recovered with
+     * `itemIds.indexOf(item.id)`. The pinned bound arrays are aligned with
+     * `itemIds` by index, and a lookup by id returns the *first* occurrence —
+     * so a session that ever drew the same item twice would deal the second
+     * round on one slider and score it on another. `drawItemIds` yields
+     * distinct ids today, which makes that latent rather than live; taking the
+     * index from the caller makes the alignment hold by construction instead of
+     * by coincidence.
+     */
+    roundIndex: number,
+  ): SliderBounds {
+    const index = roundIndex;
+    const storedMin = session.sliderMinCents?.[index];
+    const storedMax = session.sliderMaxCents?.[index];
+    if (
+      index >= 0 &&
+      index < session.itemIds.length &&
+      Number.isSafeInteger(storedMin) &&
+      Number.isSafeInteger(storedMax) &&
+      storedMin! < storedMax!
+    ) {
+      return { sliderMinCents: storedMin!, sliderMaxCents: storedMax! };
+    }
+
+    // Transitional fallback for sessions created before the pinning migration.
     return deriveSlider(
       item.truePriceCents,
       sliderSeed(session, item.id, this.app.sliderSeedSecret),
@@ -769,11 +702,21 @@ export class SessionsService {
   private gridFor(
     session: GameSession,
     item: Item,
+    roundIndex: number,
     currency: Currency,
+    exchangeRate: number = this.currency.rateFor(currency),
   ): { min: number; max: number; increment: number } {
-    const bounds = this.boundsFor(session, item);
-    const min = this.currency.fromUsdCents(bounds.sliderMinCents, currency);
-    const max = this.currency.fromUsdCents(bounds.sliderMaxCents, currency);
+    const bounds = this.boundsFor(session, item, roundIndex);
+    const min = this.currency.fromUsdCents(
+      bounds.sliderMinCents,
+      currency,
+      exchangeRate,
+    );
+    const max = this.currency.fromUsdCents(
+      bounds.sliderMaxCents,
+      currency,
+      exchangeRate,
+    );
     return { min, max, increment: this.pricing.incrementFor(min, max) };
   }
 
@@ -793,14 +736,16 @@ export class SessionsService {
     dto: PlaceBetDto,
     session: GameSession,
     item: Item,
+    roundIndex: number,
     currency: Currency,
+    exchangeRate: number,
   ): { loCents: number; hiCents: number } {
-    const bounds = this.boundsFor(session, item);
+    const bounds = this.boundsFor(session, item, roundIndex);
 
     const toUsd = (value: number) =>
       currency === DEFAULT_CURRENCY
         ? value
-        : this.currency.toUsdCents(value, currency);
+        : this.currency.toUsdCents(value, currency, exchangeRate);
 
     const clamp = (value: number) =>
       Math.min(
@@ -826,47 +771,54 @@ export class SessionsService {
     return { loCents, hiCents };
   }
 
+  /**
+   * `quotePinned` says whether the grid was rebuilt from the quote the round
+   * was dealt with, or from a rate read at this moment.
+   *
+   * Pinned is the ordinary case and can be held to the exact grid: the player
+   * was shown these bounds and this increment, so anything off them is a bet
+   * the client made up. The unpinned case is a session dealt before quotes were
+   * persisted, where the rate can move between the deal and the bet and shift
+   * every grid line under an honest player. There the bounds get a one-increment
+   * tolerance and the snap requirement is dropped — `toUsdBet` clamps into the
+   * item's own dollar bounds straight after, so a tolerated bet is still scored
+   * on the slider rather than off it.
+   */
   private validateBet(
     dto: PlaceBetDto,
     item: Item,
     session: GameSession,
+    roundIndex: number,
     currency: Currency,
+    exchangeRate: number,
+    quotePinned: boolean,
   ): void {
     const { loCents, hiCents } = dto;
-    const grid = this.gridFor(session, item, currency);
+    const grid = this.gridFor(
+      session,
+      item,
+      roundIndex,
+      currency,
+      exchangeRate,
+    );
 
     if (loCents >= hiCents) {
       throw new BadRequestException('loCents must be below hiCents');
     }
 
-    // Dollars are the stored unit, so their grid is exact and the original
-    // contract holds: a bet lands on a stop or it is refused.
-    if (currency === DEFAULT_CURRENCY) {
-      if (loCents < grid.min || hiCents > grid.max) {
-        throw new BadRequestException('Bet falls outside the slider bounds');
-      }
-      if (
-        !this.pricing.isSnapped(loCents, grid.min, grid.max) ||
-        !this.pricing.isSnapped(hiCents, grid.min, grid.max)
-      ) {
-        throw new BadRequestException('Bet must land on the slider increment');
-      }
-      return this.enforceDwell(session);
-    }
+    const drifts = !quotePinned && currency !== DEFAULT_CURRENCY;
+    const floor = drifts ? grid.min - grid.increment : grid.min;
+    const ceiling = drifts ? grid.max + grid.increment : grid.max;
 
-    // Every other currency is derived from a live rate, and that rate can be
-    // refreshed between dealing the round and receiving the bet — which moves
-    // both the bounds and the stops the player was snapping to. Requiring an
-    // exact stop would reject an honest bet for a market move the player never
-    // saw, and it protects nothing: an unsnapped bet scores no differently
-    // from the stop beside it. What still has to hold is that the bet is on
-    // the slider, so the bounds are checked with a stop of slack on each side
-    // and `toUsdBet` clamps whatever is left.
-    if (
-      loCents < grid.min - grid.increment ||
-      hiCents > grid.max + grid.increment
-    ) {
+    if (loCents < floor || hiCents > ceiling) {
       throw new BadRequestException('Bet falls outside the slider bounds');
+    }
+    if (
+      !drifts &&
+      (!this.pricing.isSnapped(loCents, grid.min, grid.max) ||
+        !this.pricing.isSnapped(hiCents, grid.min, grid.max))
+    ) {
+      throw new BadRequestException('Bet must land on the slider increment');
     }
 
     return this.enforceDwell(session);
@@ -954,17 +906,24 @@ export class SessionsService {
     item: Item,
     replayed: boolean,
     currency: Currency,
+    exchangeRate: number,
     copy: LocalisedCopy,
   ): RevealResponseDto {
     // On both paths `currentIndex` already points past the round being
     // revealed — it was advanced in this transaction, or on the original bet.
     const nextIndex = session.currentIndex;
     const isComplete = nextIndex >= session.itemIds.length;
-    const grid = this.gridFor(session, item, currency);
+    const grid = this.gridFor(
+      session,
+      item,
+      round.roundIndex,
+      currency,
+      exchangeRate,
+    );
 
     return toDto(RevealResponseDto, {
       sessionId: session.id,
-      round: this.toRoundResult(round, item, currency, copy),
+      round: this.toRoundResult(round, item, currency, copy, exchangeRate),
       currency,
       sliderMinCents: grid.min,
       sliderMaxCents: grid.max,
@@ -981,6 +940,7 @@ export class SessionsService {
     item: Item,
     currency: Currency,
     copy: LocalisedCopy,
+    exchangeRate?: number,
   ): RoundResultDto {
     // Distance from the price to the bet, rather than a branch on `hit`: a
     // round that timed out is not a hit even when the range contained the
@@ -991,7 +951,7 @@ export class SessionsService {
       item.truePriceCents - round.hiCents,
     );
     const show = (usdCents: number) =>
-      this.currency.fromUsdCents(usdCents, currency);
+      this.currency.fromUsdCents(usdCents, currency, exchangeRate);
 
     return toDto(RoundResultDto, {
       roundIndex: round.roundIndex,
@@ -1109,28 +1069,6 @@ export class SessionsService {
   async findActiveDaily(userId: number): Promise<GameSession | null> {
     return this.sessions.findOne({
       where: { userId, mode: GameMode.DAILY, dailyDate: todayUtc() },
-    });
-  }
-
-  private async toSessionDto(
-    session: GameSession,
-    resumed: boolean,
-  ): Promise<SessionDto> {
-    const theme = session.themeId
-      ? await this.catalog.getThemeById(session.themeId)
-      : null;
-
-    return toDto(SessionDto, {
-      id: session.id,
-      mode: session.mode,
-      status: session.status,
-      currentIndex: session.currentIndex,
-      roundCount: session.itemIds.length,
-      totalScore: session.totalScore,
-      themeSlug: theme?.slug ?? null,
-      themeName: theme?.name ?? null,
-      matchId: session.matchId,
-      resumed,
     });
   }
 }

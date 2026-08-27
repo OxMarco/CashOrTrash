@@ -6,6 +6,7 @@ import { CatalogModule } from '../catalog/catalog.module';
 import { DailyModule } from '../daily/daily.module';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { MatchesModule } from '../matches/matches.module';
+import { MediaModule } from '../media/media.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { UsersModule } from '../users/users.module';
 import { JOB_SCHEDULES, JOBS, MAINTENANCE_QUEUE } from './jobs.constants';
@@ -28,6 +29,7 @@ import { MaintenanceProcessor } from './maintenance.processor';
     NotificationsModule,
     UsersModule,
     MatchesModule,
+    MediaModule,
   ],
   providers: [MaintenanceProcessor],
   exports: [BullModule],

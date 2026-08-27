@@ -54,11 +54,13 @@
     "cache-manager": "^7.2.9",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
+    "expo-server-sdk": "^5.0.0",
     "fastify": "5.10.0",
     "ioredis": "^5.11.1",
     "joi": "^18.2.3",
     "keyv": "^5.6.0",
     "nestjs-pino": "^4.6.1",
+    "nestjs-zod": "^5.5.0",
     "obscenity": "^0.4.6",
     "openai": "^7.4.0",
     "passport": "^0.7.0",
@@ -70,6 +72,7 @@
     "sharp": "^0.35.3",
     "socket.io": "^4.8.1",
     "typeorm": "^0.3.31",
+    "undici": "^7.29.0",
     "zod": "^4.4.3"
   },
   "overrides": {

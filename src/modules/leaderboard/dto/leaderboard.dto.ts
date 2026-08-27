@@ -16,11 +16,9 @@ export class LeaderboardQueryDto {
 }
 
 export class LeaderboardRowDto {
-  @ApiProperty()
   @Expose()
   rank: number;
 
-  @ApiProperty()
   @Expose()
   userId: number;
 
@@ -28,11 +26,9 @@ export class LeaderboardRowDto {
   @Expose()
   username: string | null;
 
-  @ApiProperty()
   @Expose()
   avatarSeed: string;
 
-  @ApiProperty()
   @Expose()
   score: number;
 
@@ -49,7 +45,6 @@ export class LeaderboardMeDto {
   @Expose()
   rank: number | null;
 
-  @ApiProperty()
   @Expose()
   score: number;
 
@@ -100,7 +95,6 @@ export class LeaderboardResponseDto {
   @Type(() => LeaderboardRowDto)
   neighbours: LeaderboardRowDto[];
 
-  @ApiProperty()
   @Expose()
   totalPlayers: number;
 

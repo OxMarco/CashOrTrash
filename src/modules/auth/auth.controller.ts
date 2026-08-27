@@ -12,7 +12,8 @@ import { FastifyRequest } from 'fastify';
 
 import { Public } from 'src/common/decorators/public.decorator';
 import { AuthService } from './auth.service';
-import { AnonymousAuthDto, AccessTokenDto } from './dto/anonymous-auth.dto';
+import { AccessTokenDto } from './dto/anonymous-auth.dto';
+import { AnonymousAuthDto } from './dto/anonymous-auth.schema';
 
 @ApiTags('auth')
 @Controller('auth')

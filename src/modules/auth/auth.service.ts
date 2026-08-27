@@ -2,11 +2,12 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { ThrottlerException } from '@nestjs/throttler';
-import Redis from 'ioredis';
+import { createHash } from 'node:crypto';
 
 import { toDto } from 'src/common/serialization/to-dto';
 import { todayUtc } from 'src/common/utils/date.util';
 import { AppConfig, AuthConfig } from 'src/config/configuration';
+import { AppRedis } from 'src/redis/redis-commands';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
@@ -24,7 +25,7 @@ export class AuthService {
   constructor(
     private readonly users: UsersService,
     private readonly jwt: JwtService,
-    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    @Inject(REDIS_CLIENT) private readonly redis: AppRedis,
     config: ConfigService,
   ) {
     this.auth = config.getOrThrow<AuthConfig>('auth');
@@ -51,7 +52,7 @@ export class AuthService {
     const existing = await this.users.findByDeviceId(deviceId);
     if (existing) return this.issue(existing, false);
 
-    await this.enforceMintingBudget(registrationIp);
+    await this.enforceMintingBudget(registrationIp, deviceId);
 
     const { user, created } = await this.users.findOrCreateByDeviceId(
       deviceId,
@@ -68,17 +69,31 @@ export class AuthService {
    * cache outage. The budget is a nuisance to a farm, not a security boundary,
    * and it should not be able to take onboarding down with it.
    */
-  private async enforceMintingBudget(ip: string | null): Promise<void> {
+  private async enforceMintingBudget(
+    ip: string | null,
+    deviceId: string,
+  ): Promise<void> {
     if (this.app.accountsPerIpPerDay <= 0 || !ip) return;
 
-    const key = `auth:mint:${ip}:${todayUtc()}`;
-    let minted: number;
+    // Deliberately not `auth:mint:` — that name holds INCR counters written by
+    // the previous release, and SISMEMBER against a string returns WRONGTYPE.
+    // The catch below fails open, so reusing the name would silently disable
+    // the budget for every already-seen address until the counters expired.
+    const key = `auth:mintset:${ip}:${todayUtc()}`;
+    // The device id is a credential. Redis only needs a stable equality key,
+    // so retain its digest rather than another copy of the credential itself.
+    const device = createHash('sha256').update(deviceId).digest('hex');
+    let reserved: boolean;
     try {
-      minted = await this.redis.incr(key);
-      // Only the first increment needs the expiry, but setting it every time
-      // costs one round trip and removes the window where a crash between the
-      // two leaves the key immortal.
-      await this.redis.expire(key, DAY_SECONDS);
+      reserved =
+        Number(
+          await this.redis.reserveDistinctDevice(
+            key,
+            device,
+            this.app.accountsPerIpPerDay,
+            DAY_SECONDS,
+          ),
+        ) === 1;
     } catch (error) {
       this.logger.warn(
         'Could not check an account-minting budget: ' +
@@ -87,9 +102,9 @@ export class AuthService {
       return;
     }
 
-    if (minted > this.app.accountsPerIpPerDay) {
-      this.logger.warn(`Account-minting budget exhausted (${minted} today)`);
-      throw new ThrottlerException('Too many new accounts from this device');
+    if (!reserved) {
+      this.logger.warn('Account-minting budget exhausted');
+      throw new ThrottlerException('Too many new accounts from this network');
     }
   }
 

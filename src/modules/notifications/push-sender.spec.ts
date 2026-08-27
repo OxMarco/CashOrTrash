@@ -1,7 +1,7 @@
-import { ConfigService } from '@nestjs/config';
+import { ExpoPushMessage, ExpoPushTicket } from 'expo-server-sdk';
 
 import { PushPlatform, PushToken } from './entities/push-token.entity';
-import { ExpoPushSender } from './push-sender';
+import { ExpoGateway, ExpoPushSender } from './push-sender';
 
 const token = (value: string): PushToken =>
   ({ token: value, platform: PushPlatform.IOS }) as PushToken;
@@ -10,31 +10,32 @@ const token = (value: string): PushToken =>
 const EXPO_BATCH = 100;
 
 describe('ExpoPushSender', () => {
-  const fetchMock = jest.fn();
+  let expo: { chunk: jest.Mock; send: jest.Mock };
   let sender: ExpoPushSender;
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    jest.spyOn(global, 'fetch').mockImplementation(fetchMock);
-    const config = {
-      getOrThrow: jest.fn().mockReturnValue({ timeoutMs: 5_000 }),
-    } as unknown as ConfigService;
-    sender = new ExpoPushSender(config);
+    expo = {
+      chunk: jest.fn((messages: ExpoPushMessage[]) =>
+        Array.from(
+          { length: Math.ceil(messages.length / EXPO_BATCH) },
+          (_, index) =>
+            messages.slice(index * EXPO_BATCH, (index + 1) * EXPO_BATCH),
+        ),
+      ),
+      send: jest.fn(),
+    };
+    sender = new ExpoPushSender(expo as unknown as ExpoGateway);
   });
 
-  afterEach(() => jest.restoreAllMocks());
-
   it('sends Expo-compatible payloads and removes rejected device tokens', async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          data: [
-            { status: 'ok', id: 'ticket-1' },
-            { status: 'error', details: { error: 'DeviceNotRegistered' } },
-          ],
-        }),
-    });
+    expo.send.mockResolvedValue([
+      { status: 'ok', id: 'ticket-1' },
+      {
+        status: 'error',
+        message: 'gone',
+        details: { error: 'DeviceNotRegistered' },
+      },
+    ] satisfies ExpoPushTicket[]);
 
     await expect(
       sender.send([token('valid'), token('expired')], {
@@ -44,41 +45,32 @@ describe('ExpoPushSender', () => {
       }),
     ).resolves.toEqual({ sent: 1, invalidTokens: ['expired'], failed: 0 });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://exp.host/--/api/v2/push/send',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify([
-          {
-            to: 'valid',
-            title: 'Daily ready',
-            body: 'Five items are waiting.',
-            data: { kind: 'daily_ready' },
-            sound: 'default',
-          },
-          {
-            to: 'expired',
-            title: 'Daily ready',
-            body: 'Five items are waiting.',
-            data: { kind: 'daily_ready' },
-            sound: 'default',
-          },
-        ]),
-      }),
-    );
+    expect(expo.send).toHaveBeenCalledWith([
+      {
+        to: 'valid',
+        title: 'Daily ready',
+        body: 'Five items are waiting.',
+        data: { kind: 'daily_ready' },
+        sound: 'default',
+      },
+      {
+        to: 'expired',
+        title: 'Daily ready',
+        body: 'Five items are waiting.',
+        data: { kind: 'daily_ready' },
+        sound: 'default',
+      },
+    ]);
   });
 
   it('batches requests at Expo’s 100-message limit', async () => {
-    fetchMock.mockImplementation((_url: string, options: RequestInit) =>
-      Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: (JSON.parse(options.body as string) as unknown[]).map(() => ({
-              status: 'ok',
-            })),
-          }),
-      }),
+    expo.send.mockImplementation((messages: ExpoPushMessage[]) =>
+      Promise.resolve(
+        messages.map((_, index) => ({
+          status: 'ok',
+          id: `ticket-${index}`,
+        })),
+      ),
     );
 
     const tokens = Array.from({ length: 101 }, (_, index) =>
@@ -87,7 +79,7 @@ describe('ExpoPushSender', () => {
     await expect(
       sender.send(tokens, { title: 'Title', body: 'Body', data: {} }),
     ).resolves.toEqual({ sent: 101, invalidTokens: [], failed: 0 });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(expo.send).toHaveBeenCalledTimes(2);
   });
 
   /**
@@ -97,17 +89,14 @@ describe('ExpoPushSender', () => {
    * worse than the missed one.
    */
   it('keeps what a failing batch already delivered, and counts the rest', async () => {
-    const ok = (count: number) => ({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          data: Array.from({ length: count }, () => ({ status: 'ok' })),
-        }),
-    });
-
-    fetchMock
-      .mockResolvedValueOnce(ok(EXPO_BATCH))
-      .mockResolvedValueOnce({ ok: false, status: 503 });
+    expo.send
+      .mockResolvedValueOnce(
+        Array.from({ length: EXPO_BATCH }, (_, index) => ({
+          status: 'ok',
+          id: `ticket-${index}`,
+        })),
+      )
+      .mockRejectedValueOnce(new Error('503'));
 
     const tokens = Array.from({ length: EXPO_BATCH + 1 }, (_, index) =>
       token(`token-${index}`),
@@ -119,10 +108,7 @@ describe('ExpoPushSender', () => {
   });
 
   it('counts a malformed ticket list rather than unwinding the call', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ data: [] }),
-    });
+    expo.send.mockResolvedValueOnce([]);
 
     await expect(
       sender.send([token('one')], { title: 'Title', body: 'Body', data: {} }),
@@ -135,15 +121,13 @@ describe('ExpoPushSender', () => {
    * the player every future notification over one bad minute.
    */
   it('counts an unrecognised ticket without retiring the token', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          data: [
-            { status: 'error', details: { error: 'MessageRateExceeded' } },
-          ],
-        }),
-    });
+    expo.send.mockResolvedValueOnce([
+      {
+        status: 'error',
+        message: 'slow down',
+        details: { error: 'MessageRateExceeded' },
+      },
+    ] satisfies ExpoPushTicket[]);
 
     await expect(
       sender.send([token('one')], { title: 'Title', body: 'Body', data: {} }),

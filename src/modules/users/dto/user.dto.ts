@@ -15,7 +15,6 @@ export class ClaimUsernameDto {
 }
 
 export class UsernameAvailabilityDto {
-  @ApiProperty()
   @Expose()
   available: boolean;
 
@@ -60,15 +59,12 @@ export class LastDailyMissDto {
   @Expose()
   challengeDate: string;
 
-  @ApiProperty()
   @Expose()
   itemId: number;
 
-  @ApiProperty()
   @Expose()
   title: string;
 
-  @ApiProperty()
   @Expose()
   photoUrl: string;
 
@@ -98,7 +94,6 @@ export class DailyProgressDto {
   @Expose()
   roundsPlayed: number;
 
-  @ApiProperty()
   @Expose()
   roundCount: number;
 
@@ -108,7 +103,6 @@ export class DailyProgressDto {
 }
 
 export class MeDto {
-  @ApiProperty()
   @Expose()
   id: number;
 
@@ -116,11 +110,9 @@ export class MeDto {
   @Expose()
   username: string | null;
 
-  @ApiProperty()
   @Expose()
   avatarSeed: string;
 
-  @ApiProperty()
   @Expose()
   totalPoints: number;
 
@@ -130,7 +122,6 @@ export class MeDto {
   @Expose()
   streakDays: number;
 
-  @ApiProperty()
   @Expose()
   bestRoundScore: number;
 
@@ -141,7 +132,6 @@ export class MeDto {
   @Expose()
   globalRank: number | null;
 
-  @ApiProperty()
   @Expose()
   createdAt: Date;
 
