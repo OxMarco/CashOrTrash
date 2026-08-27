@@ -23,9 +23,10 @@ a deployment pass; supply the real release inputs instead.
   stack so TLS issuance can succeed.
 - [ ] Put an external uptime alert on `https://<domain>/health/ready`; container
   auto-healing is not an alert and cannot report a dead host.
-- [ ] Set `RESTIC_REPOSITORY` to storage outside the production host and set a
-  unique `RESTIC_PASSWORD` plus the backend credentials. Keep a recovery copy
-  of that password outside the host; without it, Restic snapshots are unusable.
+- [ ] Decide how `./backups` leaves this host. The sidecar only writes daily
+  dump + media pairs to local disk, so losing the host loses them with it —
+  arrange an off-host copy (host-level snapshot, `scp`/`rsync` from elsewhere)
+  and verify one landed.
 
 ## Release candidate
 
@@ -57,5 +58,5 @@ a deployment pass; supply the real release inputs instead.
   the deployed API.
 - [ ] Confirm `/admin` is not indexable and that its API routes answer 401
   without a token — a player token included.
-- [ ] Confirm a fresh dump and off-site Restic snapshot appear after deployment,
-  then record the tested release SHA and rollback dump name.
+- [ ] Confirm a fresh dump and its matching media archive appear in `./backups`
+  after deployment, then record the tested release SHA and rollback dump name.

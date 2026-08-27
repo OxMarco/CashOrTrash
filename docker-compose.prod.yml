@@ -205,12 +205,12 @@ services:
     networks:
       - backend
 
-  # Daily paired pg_dump + media sidecar. A pair shares one UTC timestamp and
-  # is only published after both components succeed.
+  # Daily pg_dump + media sidecar: one compressed custom-format dump and one
+  # matching media archive per UTC day into ./backups on the host, sharing a
+  # timestamp and rotated after BACKUP_KEEP_DAYS (default 14) days.
   # A bind mount, NOT the database's named volume, so loss of that volume does
   # not take the backups down with the data they exist to restore. Restore via
   # `make db-restore FILE=backups/<name>.dump`; one-off dump via `make db-backup`.
-  #
   db-backup:
     # Same pinned image as the postgres service, deliberately: pg_dump must be
     # at least as new as the server, and reusing the image keeps the pair in
@@ -238,12 +238,11 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      # Require a recent finalized marker, dump, and exact matching media.
+      # Alarm when the newest dump is older than 26h (24h cadence + slack):
+      # a backup sidecar that silently stopped producing dumps is strictly
+      # worse than no sidecar, because it ends belief in the need for one.
       test:
-        [
-          'CMD-SHELL',
-          'for ready in $$(find /backups -name "pair-*.ready" -mmin -1560); do stamp=$${ready##*/pair-}; stamp=$${stamp%.ready}; test -f "/backups/$$PGDATABASE-$$stamp.dump" && test -f "/backups/media-$$stamp.tar.gz" && exit 0; done; exit 1',
-        ]
+        ['CMD-SHELL', 'find /backups -name "*.dump" -mmin -1560 | grep -q .']
       interval: 5m
       timeout: 10s
       retries: 3
@@ -253,46 +252,6 @@ services:
     logging: *default-logging
     networks:
       - backend
-
-  # Encrypted off-host copy of every finalized local backup pair. Restic
-  # deduplicates the repeated content-addressed media, so complete daily media
-  # archives do not multiply remote storage in proportion to catalogue size.
-  offsite-backup:
-    image: restic/restic:0.19.1
-    restart: unless-stopped
-    entrypoint: ['/bin/sh', '/restic-backup.sh']
-    environment:
-      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:?RESTIC_REPOSITORY required}
-      RESTIC_PASSWORD: ${RESTIC_PASSWORD:?RESTIC_PASSWORD required}
-      RESTIC_KEEP_DAILY: ${RESTIC_KEEP_DAILY:-14}
-      RESTIC_KEEP_WEEKLY: ${RESTIC_KEEP_WEEKLY:-8}
-      RESTIC_KEEP_MONTHLY: ${RESTIC_KEEP_MONTHLY:-12}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
-      B2_ACCOUNT_ID: ${B2_ACCOUNT_ID:-}
-      B2_ACCOUNT_KEY: ${B2_ACCOUNT_KEY:-}
-    volumes:
-      - ./scripts/restic-backup.sh:/restic-backup.sh:ro
-      - ./backups:/backups:ro
-      - resticstate:/state
-    depends_on:
-      db-backup:
-        condition: service_healthy
-    healthcheck:
-      test:
-        [
-          'CMD-SHELL',
-          'find /state -name last-success -mmin -1560 | grep -q .',
-        ]
-      interval: 5m
-      timeout: 10s
-      retries: 3
-      start_period: 5m
-    mem_limit: 256m
-    cpus: 0.25
-    logging: *default-logging
 
   redis:
     image: redis:7-alpine
@@ -391,7 +350,6 @@ volumes:
   pgdata:
   redisdata:
   traefik_letsencrypt:
-  resticstate:
   # Washed item photographs, content-addressed. Backed up as a daily tar into
   # ./backups by the db-backup sidecar — losing this volume without that tar
   # means every item in the catalogue renders a broken image, and the originals

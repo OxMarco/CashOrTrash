@@ -1,23 +1,29 @@
 #!/bin/sh
-# Daily, restorable database + media backup pairs for docker-compose.prod.yml.
+# pg_dump + media sidecar loop (see the db-backup service in
+# docker-compose.prod.yml). One custom-format dump and one matching media
+# archive per UTC day into $BACKUP_DIR, rotated after $BACKUP_KEEP_DAYS days.
+# Connection comes from the standard PG* env vars.
+#
+# `sh db-backup.sh once` takes a single pair and exits (used by `make db-backup`).
 set -eu
 
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
 MEDIA_DIR="${MEDIA_DIR:-/media}"
 
-backup_once() {
+do_dump() {
   ts="$(date -u +%Y%m%d-%H%M%S)"
   dump="$BACKUP_DIR/$PGDATABASE-$ts.dump"
   media="$BACKUP_DIR/media-$ts.tar.gz"
-  ready="$BACKUP_DIR/pair-$ts.ready"
 
-  # Neither final name appears until both components are complete. Publishing
-  # media first means a concurrent off-site snapshot can at worst contain an
-  # unused archive, never a database dump whose referenced photographs are
-  # absent.
+  # Both components are written to .tmp names and moved into place so a run
+  # interrupted mid-write can never be mistaken for a restorable backup (by
+  # rotation, the healthcheck, or a human picking a file to restore). The dump
+  # is published last, so the presence of a dump implies its media archive is
+  # already complete — a restored database never names photographs that were
+  # not captured with it.
   if ! pg_dump --format=custom --no-owner --file="$dump.tmp"; then
-    rm -f "$dump.tmp" "$media.tmp"
+    rm -f "$dump.tmp"
     echo "pg_dump failed for $PGDATABASE" >&2
     return 1
   fi
@@ -29,37 +35,31 @@ backup_once() {
 
   mv "$media.tmp" "$media"
   mv "$dump.tmp" "$dump"
-  : > "$ready.tmp"
-  mv "$ready.tmp" "$ready"
-  echo "backup pair written: $dump and $media"
+  echo "backup written: $dump ($(du -h "$dump" | cut -f1)) and $media ($(du -h "$media" | cut -f1))"
 
-  # Rotate only after a complete pair succeeds, so a failing backup job never
-  # drains the last known-good restore points.
-  find "$BACKUP_DIR" -maxdepth 1 -name "$PGDATABASE-*.dump" \
-    -mtime +"$KEEP_DAYS" -delete
-  find "$BACKUP_DIR" -maxdepth 1 -name 'media-*.tar.gz' \
-    -mtime +"$KEEP_DAYS" -delete
-  find "$BACKUP_DIR" -maxdepth 1 -name 'pair-*.ready' \
-    -mtime +"$KEEP_DAYS" -delete
+  # Rotate only after a successful pair: if backups start failing, old ones
+  # stop aging out instead of draining to zero.
+  find "$BACKUP_DIR" -maxdepth 1 -name "$PGDATABASE-*.dump" -mtime +"$KEEP_DAYS" -delete
+  find "$BACKUP_DIR" -maxdepth 1 -name 'media-*.tar.gz' -mtime +"$KEEP_DAYS" -delete
 }
 
 mkdir -p "$BACKUP_DIR"
 test -d "$MEDIA_DIR"
-find "$BACKUP_DIR" -maxdepth 1 \
-  \( -name '*.dump.tmp' -o -name '*.tar.gz.tmp' -o -name '*.ready.tmp' \) \
-  -delete
+find "$BACKUP_DIR" -maxdepth 1 \( -name '*.dump.tmp' -o -name '*.tar.gz.tmp' \) -delete
 
 if [ "${1:-}" = "once" ]; then
-  backup_once
+  do_dump
   exit 0
 fi
 
-# Restart-safe schedule: the first pair lands at boot, then one just after each
-# UTC midnight. A failed attempt leaves no final dump and is retried in 5m.
+# Restart-safe daily schedule without cron or date math: back up whenever no
+# dump stamped with today's UTC date exists yet. The first pair lands right
+# after boot, later ones just after midnight UTC. A failed attempt is retried
+# on the next tick because today's file still doesn't exist.
 while :; do
   today="$(date -u +%Y%m%d)"
-  if ! ls "$BACKUP_DIR/pair-$today"-*.ready >/dev/null 2>&1; then
-    backup_once || true
+  if ! ls "$BACKUP_DIR/$PGDATABASE-$today"-*.dump >/dev/null 2>&1; then
+    do_dump || true
   fi
   sleep 300
 done

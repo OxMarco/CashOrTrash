@@ -121,11 +121,29 @@ export class ExpoPushSender extends PushSender {
       data: message.data,
       sound: 'default',
     }));
-    let offset = 0;
+    const byToken = new Map(tokens.map((target) => [target.token, target]));
 
     for (const chunk of this.expo.chunk(messages)) {
-      const batch = tokens.slice(offset, offset + chunk.length);
-      offset += chunk.length;
+      // Each chunk is mapped back to its tokens through the recipient the SDK
+      // is actually going to send to, not by slicing `tokens` at a running
+      // offset. The offset version was only correct while `chunkPushNotifications`
+      // packed messages in order and dropped none — an invariant it does not
+      // promise and nothing here could detect. Drifting by one would attribute
+      // every ticket to its neighbour, so a `DeviceNotRegistered` would retire
+      // a live device and leave the dead one registered to fail again forever.
+      const batch = chunk
+        .map((entry) =>
+          typeof entry.to === 'string' ? byToken.get(entry.to) : undefined,
+        )
+        .filter((target): target is PushToken => target !== undefined);
+
+      if (batch.length !== chunk.length) {
+        // A recipient this batch cannot be traced back to. No ticket in the
+        // chunk can be safely attributed, so none of them retires a token.
+        failed += chunk.length;
+        this.logger.warn('Expo push chunk carried an unrecognised recipient');
+        continue;
+      }
 
       let tickets: ExpoPushTicket[];
       try {

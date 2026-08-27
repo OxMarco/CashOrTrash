@@ -116,6 +116,47 @@ describe('ExpoPushSender', () => {
   });
 
   /**
+   * `chunkPushNotifications` owns how messages are packed, and nothing here
+   * constrains it to emit them in the order they were handed over. Attributing
+   * tickets by position would then retire whichever token happened to sit at
+   * the dead one's index — deactivating a live device and leaving the dead one
+   * to fail again on every future send.
+   */
+  it('retires the token the ticket belongs to when Expo reorders a chunk', async () => {
+    expo.chunk.mockImplementation((messages: ExpoPushMessage[]) => [
+      [...messages].reverse(),
+    ]);
+    expo.send.mockResolvedValueOnce([
+      {
+        status: 'error',
+        message: 'gone',
+        details: { error: 'DeviceNotRegistered' },
+      },
+      { status: 'ok', id: 'ticket-1' },
+    ] satisfies ExpoPushTicket[]);
+
+    // Reversed, so the dead ticket is first while `expired` was passed second.
+    await expect(
+      sender.send([token('valid'), token('expired')], {
+        title: 'Title',
+        body: 'Body',
+        data: {},
+      }),
+    ).resolves.toEqual({ sent: 1, invalidTokens: ['expired'], failed: 0 });
+  });
+
+  it('attributes no ticket in a chunk it cannot trace back to a token', async () => {
+    expo.chunk.mockImplementation(() => [
+      [{ to: 'never-registered', title: 'Title', body: 'Body' }],
+    ]);
+
+    await expect(
+      sender.send([token('one')], { title: 'Title', body: 'Body', data: {} }),
+    ).resolves.toEqual({ sent: 0, invalidTokens: [], failed: 1 });
+    expect(expo.send).not.toHaveBeenCalled();
+  });
+
+  /**
    * Neither delivered nor a dead device — a throttle, or an Expo-side fault.
    * It must not be mistaken for a token to retire: deactivating it would cost
    * the player every future notification over one bad minute.
