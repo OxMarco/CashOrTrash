@@ -5,6 +5,19 @@ x-logging: &default-logging
     max-file: '3'
 
 services:
+  # Fixes ownership of the media volume before the app starts. The Dockerfile
+  # chowns the mountpoint to `node`, but Docker copies that into a named volume
+  # only when the volume is first created — a volume made by an older image, or
+  # restored by root, stays root-owned, and the app (uid 1000) then fails every
+  # upload with EACCES and cannot seed the placeholder photo. Idempotent, and a
+  # no-op once ownership is right.
+  media-init:
+    image: busybox:stable
+    command: ['sh', '-c', 'chown -R 1000:1000 /media']
+    volumes:
+      - mediadata:/media
+    logging: *default-logging
+
   app:
     build:
       context: .
@@ -134,6 +147,8 @@ services:
       # in a worker container with its own limit, not here.
       - mediadata:/var/lib/cashortrash/media
     depends_on:
+      media-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
