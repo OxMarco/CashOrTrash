@@ -194,6 +194,58 @@ describe('ImageProcessor', () => {
     });
 
     /**
+     * A 64x48 HEIC, straight out of the format an iPhone shoots in by default.
+     *
+     * The header parses — libvips reads the dimensions and the orientation
+     * without complaint — and the decode is what fails, because the prebuilt
+     * binary carries no HEVC decoder. That gap is the whole reason the guard
+     * lives around the transform and not only around `metadata()`.
+     */
+    it('names HEIC when the header parses and the decode cannot', async () => {
+      const heic = Buffer.from(
+        'AAAAJGZ0eXBoZWljAAAAAG1pZjFNaVBybWlhZk1pSEJoZWljAAABhm1ldGEAAAAA' +
+          'AAAAIWhkbHIAAAAAAAAAAHBpY3QAAAAAAAAAAAAAAAAAAAAAJGRpbmYAAAAcZHJl' +
+          'ZgAAAAAAAAABAAAADHVybCAAAAABAAAADnBpdG0AAAAAAAEAAAAjaWluZgAAAAAA' +
+          'AQAAABVpbmZlAgAAAAABAABodmMxAAAAAOZpcHJwAAAAxWlwY28AAAATY29scm5j' +
+          'bHgAAgACAAaAAAAADGNsbGkAywBAAAAAFGlzcGUAAAAAAAAAQAAAADAAAAAJaXJv' +
+          'dAAAAAAQcGl4aQAAAAADCAgIAAAAcWh2Y0MBA3AAAACwAAAAAAAe8AD8/fj4AAAL' +
+          'A6AAAQAXQAEMAf//A3AAAAMAsAAAAwAAAwAecCShAAEAI0IBAQNwAAADALAAAAMA' +
+          'AAMAHqAUIEHBjE4h7kWVTcCAgYAgogABAAlEAcBjiyERTZAAAAAZaXBtYQAAAAAA' +
+          'AAABAAEGgQIDBYaEAAAAHmlsb2MAAAAARAAAAQABAAAAAQAAAboAAAAlAAAAAW1k' +
+          'YXQAAAAAAAAANQAAACEoAa+izvA6v/q2FgYTZiecoNC8WduxZN6Ak7OAFV2LmeA=',
+        'base64',
+      );
+
+      await expect(processor.normalise(heic)).rejects.toMatchObject({
+        reason: 'unsupported-format',
+        message: expect.stringContaining('HEIC'),
+      });
+    });
+
+    /**
+     * A JPEG cut off part-way through its scan data — an upload that dropped, or
+     * a half-written file. Its SOF marker is intact, so it survives the header
+     * probe and dies in the decoder, where an unguarded error would surface as a
+     * 500 on a file the operator could simply re-save.
+     */
+    it('refuses a truncated source rather than letting sharp escape', async () => {
+      const whole = await sharp({
+        create: {
+          width: 1200,
+          height: 900,
+          channels: 3,
+          background: { r: 120, g: 40, b: 200 },
+        },
+      })
+        .jpeg()
+        .toBuffer();
+
+      await expect(
+        processor.normalise(whole.subarray(0, Math.floor(whole.length / 3))),
+      ).rejects.toMatchObject({ reason: 'decode-failed' });
+    });
+
+    /**
      * 20 000 × 20 000 = 400 MP in a 70-byte file. Decoding it would reserve over
      * a gigabyte of native memory outside the V8 heap, where the heap cap cannot
      * see it and only the cgroup OOM killer can stop it.

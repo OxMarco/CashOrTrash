@@ -13,6 +13,8 @@ import { Repository } from 'typeorm';
 
 import { MediaConfig } from 'src/config/configuration';
 import { CatalogService } from 'src/modules/catalog/catalog.service';
+import { Currency } from 'src/modules/currency/currency.constants';
+import { CurrencyService } from 'src/modules/currency/currency.service';
 import { Item, ItemOrigin } from 'src/modules/catalog/entities/item.entity';
 import { Theme } from 'src/modules/catalog/entities/theme.entity';
 import {
@@ -40,8 +42,10 @@ export interface CategoryInput {
 export interface ItemInput {
   themeId: number;
   title: string;
-  conditionLine: string;
-  priceCents: number;
+  /** What the operator typed, in the minor units of `currency`. */
+  priceMinorUnits: number;
+  /** What they typed it in. Converted to USD before anything is stored. */
+  currency: Currency;
   sourceUrl?: string | null;
 }
 
@@ -92,6 +96,7 @@ export class AdminCatalogService {
     private readonly processor: ImageProcessor,
     private readonly store: MediaStore,
     private readonly catalog: CatalogService,
+    private readonly currency: CurrencyService,
     @InjectQueue(MAINTENANCE_QUEUE) private readonly queue: Queue,
     config: ConfigService,
   ) {
@@ -194,7 +199,22 @@ export class AdminCatalogService {
 
     const title = input.title.trim();
     if (!title) throw new BadRequestException('An item needs a name.');
-    const priceProblem = rejectPrice(input.priceCents);
+
+    // Converted before it is judged, because the bounds `rejectPrice` enforces
+    // are the slider's, and the slider only ever sees dollars. Checking the
+    // typed figure instead would let a euro listing pass on a number the
+    // catalogue then stores as a different one.
+    //
+    // The rate is today's and is not kept. An item is priced once, at the
+    // moment it is catalogued, exactly as it would be if the operator had
+    // converted the listing by hand before typing it in — and a rate that
+    // moved afterwards is not a reason for the catalogue to reprice itself
+    // underneath rounds already dealt from it.
+    const priceCents = this.currency.toUsdCents(
+      input.priceMinorUnits,
+      input.currency,
+    );
+    const priceProblem = rejectPrice(priceCents);
     if (priceProblem) throw new BadRequestException(priceProblem);
 
     const { digest, photoUrl } = await this.storePhoto(photo);
@@ -208,13 +228,21 @@ export class AdminCatalogService {
     // blobs that are both unreferenced and older than MEDIA_ORPHAN_GRACE_MS, so
     // an in-flight write is never the one it takes. The cost of leaving this to
     // the sweep is one orphaned blob per failed create, for up to a day.
-    return this.createStoredItem(input, theme, title, digest, photoUrl);
+    return this.createStoredItem(
+      input,
+      theme,
+      title,
+      priceCents,
+      digest,
+      photoUrl,
+    );
   }
 
   private async createStoredItem(
     input: ItemInput,
     theme: Theme,
     title: string,
+    priceCents: number,
     digest: string,
     photoUrl: string,
   ): Promise<Item> {
@@ -234,12 +262,19 @@ export class AdminCatalogService {
     const item = await this.items.save(
       this.items.create({
         title: await this.freeTitle(title, input.themeId),
-        conditionLine: input.conditionLine.trim(),
-        truePriceCents: input.priceCents,
+        // Left empty on purpose. The copywriter writes it from the photograph
+        // and the title on the next pass of the copy queue — which is why the
+        // portal no longer asks for one, and why `copyPending` below is what
+        // actually fills this column.
+        conditionLine: '',
+        truePriceCents: priceCents,
         themeId: input.themeId,
         photoUrl,
         sourceHash: digest,
-        sourceName: null,
+        // The operator's own words, kept for the copy pass — which overwrites
+        // `title` and would otherwise have nothing but its own last answer to
+        // work from the second time it runs. See the column's own note.
+        sourceName: title.slice(0, 256),
         sourceUrl: input.sourceUrl?.trim() || null,
         origin: ItemOrigin.MANUAL,
         active: true,

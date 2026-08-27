@@ -134,11 +134,19 @@ export function parseFilename(file: string): ParsedFilename | null {
 }
 
 /**
- * Pulls the condition out of the description, leaving the object behind.
+ * Pulls what the filename says about the object out of it, leaving the name
+ * behind.
  *
  * Two shapes in this catalogue: vehicles and watches carry a model year, cards
  * carry a grade abbreviation. Both belong under the photograph rather than in
  * the title.
+ *
+ * Only ever reports what the text actually carried. An empty line is the honest
+ * answer for a filename that said nothing, and it used to be filled with the
+ * word "Used" — which is not a fact about the object, it is a guess, and the
+ * copywriter is told the contents of this field are factual. That fabrication
+ * came back as "Used · 81m² apartment in Piazza Bologna": a word that says
+ * nothing about a flat, asserted as though the filename had stated it.
  */
 export function splitCondition(rawText: string): {
   title: string;
@@ -147,20 +155,20 @@ export function splitCondition(rawText: string): {
   const words = rawText.trim().split(/\s+/);
   const last = words[words.length - 1]?.toLowerCase() ?? '';
 
+  // A grade is a real condition statement, made by a grader — the one case
+  // where the filename genuinely knows.
   const grade = CARD_GRADES[last];
   if (grade) {
     return { title: words.slice(0, -1).join(' '), conditionLine: grade };
   }
 
+  // A year is an era, not a condition. It is carried through because it is a
+  // fact worth having under the photograph; what it is not is evidence that
+  // the object is worn.
   const year = /^(19|20)\d{2}$/.test(last) ? last : null;
   if (year) {
-    return {
-      title: words.slice(0, -1).join(' '),
-      conditionLine: `${year} · used`,
-    };
+    return { title: words.slice(0, -1).join(' '), conditionLine: year };
   }
 
-  // The filename did not say. The copywriter will almost always do better than
-  // this, but the column is NOT NULL and something has to be here if it does not.
-  return { title: rawText, conditionLine: 'Used' };
+  return { title: rawText, conditionLine: '' };
 }

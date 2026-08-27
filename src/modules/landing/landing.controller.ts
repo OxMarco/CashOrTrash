@@ -44,6 +44,30 @@ const OG_TITLE = 'CashOrTrash: guess what stuff costs';
 const OG_DESCRIPTION =
   'Bet a price range, not a number. The narrower the range, the bigger the multiplier — miss it and score nothing. Five items a day, same five for everyone.';
 
+/**
+ * The policy for the landing document, and *only* the landing document: the
+ * page is one self-contained file, so inline style, inline script and `data:`
+ * fonts are the whole of it. Everything the page does not inline stays denied.
+ *
+ * A constant rather than an inline literal because it has to go out on the 304
+ * as well as the 200. A 304 is not a response the browser throws away — under
+ * RFC 9111 its headers are merged into the stored response, so a revalidation
+ * that omits this header lets helmet's global deny-all overwrite the cached
+ * policy. The page then renders blank on every visit after the first, with a
+ * console full of blocked inline style and script and nothing in the server
+ * logs to say why.
+ */
+const LANDING_CSP = [
+  "default-src 'none'",
+  "style-src 'unsafe-inline'",
+  "script-src 'unsafe-inline'",
+  'font-src data:',
+  "img-src 'self' data:",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 const escapeAttribute = (value: string): string =>
   value.replace(
     /[&<>"']/g,
@@ -94,6 +118,7 @@ export class LandingController {
         .status(304)
         .header('ETag', page.etag)
         .header('Cache-Control', 'public, max-age=300')
+        .header('Content-Security-Policy', LANDING_CSP)
         .send();
       return;
     }
@@ -104,19 +129,7 @@ export class LandingController {
       .header('Cache-Control', 'public, max-age=300')
       .header('ETag', page.etag)
       .header('X-Content-Type-Options', 'nosniff')
-      .header(
-        'Content-Security-Policy',
-        [
-          "default-src 'none'",
-          "style-src 'unsafe-inline'",
-          "script-src 'unsafe-inline'",
-          'font-src data:',
-          "img-src 'self' data:",
-          "base-uri 'none'",
-          "form-action 'none'",
-          "frame-ancestors 'none'",
-        ].join('; '),
-      )
+      .header('Content-Security-Policy', LANDING_CSP)
       .send(page.html);
   }
 

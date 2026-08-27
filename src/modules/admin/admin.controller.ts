@@ -23,6 +23,12 @@ import { join } from 'node:path';
 
 import { RawResponse } from 'src/common/interceptors/dto-serializer.interceptor';
 import { Public } from 'src/common/decorators/public.decorator';
+import {
+  Currency,
+  DEFAULT_CURRENCY,
+  isCurrency,
+  SUPPORTED_CURRENCIES,
+} from 'src/modules/currency/currency.constants';
 import { THEME_ICONS } from 'src/modules/catalog/theme-icons';
 import { AdminAuthService } from './admin-auth.service';
 import { AdminCatalogService } from './admin-catalog.service';
@@ -56,8 +62,13 @@ const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 interface UploadedItem {
   themeId: number;
   title: string;
-  conditionLine: string;
-  priceCents: number;
+  /**
+   * Minor units of `currency`, not of the dollar. The catalogue stores USD, and
+   * `AdminCatalogService` is where the two meet — the portal collects the price
+   * in whatever the listing was written in and converts once, on the way in.
+   */
+  priceMinorUnits: number;
+  currency: Currency;
   sourceUrl: string | null;
   photo: Buffer;
 }
@@ -188,8 +199,8 @@ export class AdminController {
       {
         themeId: upload.themeId,
         title: upload.title,
-        conditionLine: upload.conditionLine,
-        priceCents: upload.priceCents,
+        priceMinorUnits: upload.priceMinorUnits,
+        currency: upload.currency,
         sourceUrl: upload.sourceUrl,
       },
       upload.photo,
@@ -279,25 +290,34 @@ export class AdminController {
     }
 
     const themeId = Number(fields.get('themeId'));
-    const priceCents = Number(fields.get('priceCents'));
+    const priceMinorUnits = Number(fields.get('priceCents'));
     if (!Number.isSafeInteger(themeId) || themeId <= 0) {
       throw new BadRequestException('Pick a category.');
     }
-    if (!Number.isSafeInteger(priceCents) || priceCents <= 0) {
+    if (!Number.isSafeInteger(priceMinorUnits) || priceMinorUnits <= 0) {
       throw new BadRequestException('The price must be a positive amount.');
     }
 
+    // Absent means dollars, which is both the catalogue's unit and what the
+    // portal preselects. Present but unrecognised is a mistake worth naming:
+    // silently pricing a euro listing as dollars is a wrong catalogue entry
+    // that looks perfectly correct afterwards.
+    const currencyField = (fields.get('currency') ?? '').trim().toUpperCase();
+    let currency: Currency = DEFAULT_CURRENCY;
+    if (currencyField) {
+      if (!isCurrency(currencyField)) {
+        throw new BadRequestException(
+          `The currency must be one of ${SUPPORTED_CURRENCIES.join(', ')}.`,
+        );
+      }
+      currency = currencyField;
+    }
+
     const title = (fields.get('title') ?? '').trim();
-    const conditionLine = (fields.get('conditionLine') ?? '').trim();
     const sourceUrl = (fields.get('sourceUrl') ?? '').trim();
     if (title.length < 1 || title.length > 120) {
       throw new BadRequestException(
         'The item name must be between 1 and 120 characters.',
-      );
-    }
-    if (conditionLine.length > 160) {
-      throw new BadRequestException(
-        'The description must be at most 160 characters.',
       );
     }
     if (sourceUrl.length > 512 || !isHttpUrl(sourceUrl)) {
@@ -307,8 +327,8 @@ export class AdminController {
     return {
       themeId,
       title,
-      conditionLine,
-      priceCents,
+      priceMinorUnits,
+      currency,
       sourceUrl: sourceUrl || null,
       photo,
     };

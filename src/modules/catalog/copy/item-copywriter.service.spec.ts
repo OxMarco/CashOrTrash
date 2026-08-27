@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 
 import {
+  describeBatch,
   ItemCopywriter,
   MAX_CONDITION_LENGTH,
   MAX_TITLE_LENGTH,
@@ -60,6 +61,118 @@ describe('findPriceLeak', () => {
 
   it('names the phrase it caught, so a rejection can be read back', () => {
     expect(findPriceLeak('a rare find')).toBe('a desirability claim ("rare")');
+  });
+});
+
+/**
+ * The brief tells the model that `knownCondition` is factual and to carry it
+ * into the description. That makes an empty one actively harmful: it is a
+ * claim, dressed as a fact, that there is something to say about the state of
+ * the object. It used to arrive as the literal word "Used" — invented by
+ * `splitCondition` for any filename that did not end in a year or a grade —
+ * and came back as "Used · 81m² apartment in Piazza Bologna".
+ */
+describe('what the model is told about an item', () => {
+  const item = {
+    ref: 'a',
+    category: 'apartments',
+    rawText: 'rome torpignattara 60m2',
+  };
+
+  const brief = (batch: Parameters<typeof describeBatch>[0]) => {
+    const first = describeBatch(batch)[0];
+    return first.type === 'input_text' ? first.text : '';
+  };
+
+  /** The rows are the JSON array the text block ends with. */
+  const rowsOf = (knownCondition: string) => {
+    const text = brief([{ ...item, knownCondition }]);
+    return JSON.parse(text.slice(text.indexOf('['))) as Record<
+      string,
+      unknown
+    >[];
+  };
+
+  /**
+   * The brief tells the model that `knownCondition` is factual and to carry it
+   * into the description. That makes an empty one actively harmful: it is a
+   * claim, dressed as a fact, that there is something to say about the state of
+   * the object. It used to arrive as the literal word "Used" — invented by
+   * `splitCondition` for any filename not ending in a year or a grade — and
+   * came back as "Used · 81m² apartment in Piazza Bologna".
+   */
+  it('omits the condition key entirely when nothing recorded one', () => {
+    expect(rowsOf('')[0]).not.toHaveProperty('knownCondition');
+  });
+
+  it('sends one through when the filename genuinely carried it', () => {
+    expect(rowsOf('Near Mint')[0].knownCondition).toBe('Near Mint');
+  });
+
+  it('tells the model not to substitute a word for an absent one', () => {
+    expect(brief([{ ...item, knownCondition: '' }])).toContain(
+      'Do not reach for a word like "used" to stand in',
+    );
+  });
+
+  describe('and its photograph', () => {
+    const withPhoto = (ref: string, photo?: string) => ({
+      ...item,
+      ref,
+      knownCondition: '',
+      ...(photo ? { photo } : {}),
+    });
+    const RED = 'data:image/webp;base64,AAAA';
+    const BLUE = 'data:image/webp;base64,BBBB';
+
+    /**
+     * A batch is four items and up to four pictures in one request, and nothing
+     * inside an image block says which item it belongs to. Each is announced by
+     * `ref` in the text immediately before it, so the association survives.
+     */
+    it('introduces each photograph by the ref it belongs to', () => {
+      const content = describeBatch([
+        withPhoto('11', RED),
+        withPhoto('22', BLUE),
+      ]);
+
+      const images = content.flatMap((block, index) =>
+        block.type === 'input_image' ? [{ block, index }] : [],
+      );
+      expect(images).toHaveLength(2);
+
+      for (const [nth, { block, index }] of images.entries()) {
+        const before = content[index - 1];
+        expect(before.type).toBe('input_text');
+        expect(before.type === 'input_text' ? before.text : '').toContain(
+          ['"11"', '"22"'][nth],
+        );
+        expect(block.type === 'input_image' ? block.image_url : '').toBe(
+          [RED, BLUE][nth],
+        );
+      }
+    });
+
+    /** An item with no blob is written from its words, as every item once was. */
+    it('sends text alone when there is no photograph', () => {
+      const content = describeBatch([withPhoto('11')]);
+
+      expect(content).toHaveLength(1);
+      expect(content[0].type).toBe('input_text');
+      expect(brief([withPhoto('11')])).not.toContain('The photographs follow');
+    });
+
+    /**
+     * The absent picture has to be named as absent. Left unsaid, a batch where
+     * three items carry one and the fourth does not invites the model to
+     * describe the fourth from a neighbour's photograph.
+     */
+    it('says so when only some of a batch carry one', () => {
+      const text = brief([withPhoto('11', RED), withPhoto('22')]);
+
+      expect(text).toContain('The photographs follow');
+      expect(text).toContain('An item whose photograph is not here has none');
+    });
   });
 });
 

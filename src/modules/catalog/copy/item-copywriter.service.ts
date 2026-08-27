@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
+import type {
+  ResponseInput,
+  ResponseInputContent,
+} from 'openai/resources/responses/responses';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 
@@ -29,8 +33,13 @@ export const MAX_CONDITION_LENGTH = 150;
 export const MAX_TRANSLATED_TITLE_LENGTH = 160;
 export const MAX_TRANSLATED_CONDITION_LENGTH = 210;
 
-/** Items per request. Small enough that one refusal costs little. */
-const BATCH_SIZE = 8;
+/**
+ * Items per request. Small enough that one refusal costs little — and half what
+ * it was, because each item now carries its photograph. A refused batch throws
+ * away four images' worth of request rather than eight, and a batch that would
+ * otherwise be several megabytes of base64 stays a reasonable one.
+ */
+const BATCH_SIZE = 4;
 
 const SYSTEM = `You write the title and the one-line description shown under an item's photograph in a price-guessing game.
 
@@ -38,9 +47,15 @@ The player sees your title, the photograph, your line, and a slider. They then g
 
 You are given the raw text of the item's filename, as typed by whoever added it. It is terse, sometimes misspelled, and sometimes has the model year or a card grade stuck on the end.
 
+Most items also come with their photograph — the same photograph the player will be looking at while they read your line. Describe what is actually in it. Because the player has the picture too, naming what is visible in it gives nothing away; it is the appraisal of what you see that would, and that is forbidden below whether you got it from the picture or from what you know.
+
+Write only what the photograph and the text support. If you cannot see how many rooms there are, do not say. If the floor is not visible, do not name it. A shorter true line beats a fuller invented one, and an invented detail is worse than a missing one because the player cannot tell it apart from a real one.
+
 TITLE: name the object as a catalogue would. Correct the spelling and capitalisation of marques, models and proper nouns. Keep it specific — the model, not the category. Do not put the year or the condition in the title. Under 120 characters, no trailing full stop.
 
-DESCRIPTION: write what the object IS — its specifics, materials, mechanism, era, configuration, condition, and the concrete details an informed person would notice. Facts a knowledgeable owner would state plainly.
+DESCRIPTION: write what the object IS — its specifics, materials, mechanism, era, configuration, and the concrete details an informed person would notice. Facts a knowledgeable owner would state plainly.
+
+Condition only when you can actually see it or have been told it: visible wear, a restoration, a refit, a grader's verdict. With the photograph in front of you this is often answerable — a kitchen plainly refitted, a dial plainly marked, a car plainly repainted — and where it is, say so plainly. Never classify an object as new or used to fill the gap. For most of what is in this catalogue that classification says nothing — every apartment is used, every classic car is used — and asserting it from a photograph is a guess wearing the clothes of a fact. An object whose condition you do not know gets a line about what it is instead.
 
 NEVER include, in either field, in any form:
 - a price, a number of any currency, or a range
@@ -57,11 +72,14 @@ Good:
 - title "Alfa Romeo Giulietta" / description "1959 · 1.3-litre twin-cam four · steel body, drum brakes all round · older restoration"
 - title "Patek Philippe Calatrava" / description "Manual wind, 18k yellow gold case, 31mm · box and papers · light hairlines on the caseback"
 - title "Black Lotus" / description "Beta print, black border · light edge wear, centred face · unplayed since sleeving"
+- title "Kreuzberg Apartment" / description "Berlin, Kreuzberg · 74 m² over three rooms · Altbau, stucco ceilings, tiled stove"
 
 Bad (all leak the answer):
 - "A rare and highly sought-after example" — desirability claim
 - "One of the most valuable cards ever printed" — value judgement
-- "Recently sold at auction for a record sum" — market reference`;
+- "Recently sold at auction for a record sum" — market reference
+
+The examples above show register and shape, and nothing else. Their details belong to those objects. If an item you are given happens to be the same model, the same card or a flat in the same district, you still write only what that item's own photograph and text support — never borrow a specification, a measurement or a feature from an example to fill a gap.`;
 
 const LANGUAGE_NAMES: Record<CopyLocale, string> = {
   es: 'Spanish',
@@ -91,7 +109,7 @@ You are given the English title and description for the same object, plus the ra
 
 TITLE: name the object as a ${language} catalogue would. Marques, model names and other proper nouns stay in their original form — a Patek Philippe Calatrava is a Patek Philippe Calatrava in every language. Translate the common nouns around them, not the names. No trailing full stop.
 
-DESCRIPTION: what the object IS — its specifics, materials, mechanism, era, configuration and condition. One line, no trailing full stop. Use " · " to separate two or three clauses, as the English does.
+DESCRIPTION: what the object IS — its specifics, materials, mechanism, era and configuration, and its condition where the English gives one. Where the English says nothing about condition, say nothing about it either — do not add a word for new or used to round the sentence out. One line, no trailing full stop. Use " · " to separate two or three clauses, as the English does.
 
 The player sees your words, the photograph and a slider, and then guesses what the object is worth. NEVER include, in either field, in any form:
 - a price, a number of any currency, or a range
@@ -140,6 +158,14 @@ export interface CopyRequest {
   knownCondition: string;
   /** Titles already taken in this category, which this one must not repeat. */
   taken?: string[];
+  /**
+   * The item's photograph as a data URL, when there is one to send.
+   *
+   * Optional because a seed row, or one whose blob has been swept, still
+   * deserves the copy its text can support — an item without a picture is
+   * written from its words, exactly as every item was before.
+   */
+  photo?: string;
 }
 
 export interface ItemCopy {
@@ -320,7 +346,9 @@ export class ItemCopywriter {
   private async writeBatch(
     batch: CopyRequest[],
   ): Promise<Map<string, ItemCopy>> {
-    const parsed = await this.ask(SYSTEM, this.describe(batch));
+    const parsed = await this.ask(SYSTEM, [
+      { role: 'user', content: describeBatch(batch) },
+    ]);
 
     const accepted = new Map<string, ItemCopy>();
     for (const row of parsed.items) {
@@ -344,7 +372,7 @@ export class ItemCopywriter {
    */
   private async ask(
     instructions: string,
-    input: string,
+    input: string | ResponseInput,
   ): Promise<z.infer<typeof CopyBatch>> {
     // Bounded rather than left on the SDK's defaults — see the note on
     // `openaiTimeoutMs`. The retries are the SDK's own, declared here so the
@@ -441,24 +469,64 @@ export class ItemCopywriter {
 
     return { title, conditionLine };
   }
+}
 
-  private describe(batch: CopyRequest[]): string {
-    const rows = batch.map((item) => ({
-      ref: item.ref,
-      category: item.category,
-      filenameText: item.rawText,
-      knownCondition: item.knownCondition,
-      ...(item.taken?.length ? { titlesAlreadyUsed: item.taken } : {}),
-    }));
+/**
+ * The per-batch half of the brief, separated from the class so its two real
+ * rules can be pinned by a test: an item nobody recorded a condition for is
+ * sent without the key rather than with an empty one, and an item's photograph
+ * arrives labelled with the `ref` it belongs to.
+ *
+ * The labelling is what makes a batch safe. Four items and four pictures in one
+ * request is four chances to describe the wrong object, and nothing inside an
+ * image block says which row it came with — so each is introduced by name, in
+ * the text immediately before it.
+ */
+export function describeBatch(batch: CopyRequest[]): ResponseInputContent[] {
+  const rows = batch.map((item) => ({
+    ref: item.ref,
+    category: item.category,
+    filenameText: item.rawText,
+    // Omitted rather than sent empty, for the same reason the next line
+    // calls it factual: a key that is present is a claim about the object,
+    // and `""` would be a claim that there is nothing to say. Most items
+    // arrive without one — the portal does not ask, and a filename only
+    // carries this when it ends in a year or a grade.
+    ...(item.knownCondition ? { knownCondition: item.knownCondition } : {}),
+    ...(item.taken?.length ? { titlesAlreadyUsed: item.taken } : {}),
+  }));
 
-    return [
-      'Write a title and a description for each item below. Return every item, keyed by its `ref`.',
-      '',
-      '`filenameText` is the raw description someone typed. `knownCondition` is what it recorded about condition — usually a model year or a card grade. That is factual, so carry it into the description rather than discarding it.',
-      '',
-      'Where `titlesAlreadyUsed` is present, your title must differ from every entry in it — those name other objects in the same category.',
-      '',
-      JSON.stringify(rows, null, 2),
-    ].join('\n');
+  const withPhotos = batch.filter((item) => item.photo);
+
+  const brief = [
+    'Write a title and a description for each item below. Return every item, keyed by its `ref`.',
+    '',
+    '`filenameText` is the raw description someone typed. Where `knownCondition` is present it is what that text recorded — a model year, or a grade a card was given. That much is factual, so carry it into the description rather than discarding it.',
+    '',
+    'Most items have no `knownCondition`, and that means nothing is known about the state of the object. Write the description without it. Do not reach for a word like "used" to stand in.',
+    '',
+    'Where `titlesAlreadyUsed` is present, your title must differ from every entry in it — those name other objects in the same category.',
+    '',
+    JSON.stringify(rows, null, 2),
+    ...(withPhotos.length
+      ? [
+          '',
+          'The photographs follow, each introduced by the `ref` it belongs to. Use each one only for its own item. An item whose photograph is not here has none — write it from its text, and do not guess at what a picture would have shown.',
+        ]
+      : []),
+  ].join('\n');
+
+  const content: ResponseInputContent[] = [{ type: 'input_text', text: brief }];
+  for (const item of withPhotos) {
+    content.push({
+      type: 'input_text',
+      text: `The photograph for ref ${JSON.stringify(item.ref)}:`,
+    });
+    content.push({
+      type: 'input_image',
+      image_url: item.photo as string,
+      detail: 'auto',
+    });
   }
+  return content;
 }

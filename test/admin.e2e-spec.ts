@@ -74,7 +74,6 @@ describe('admin portal API', () => {
     const form = new FormData();
     form.set('themeId', String(id));
     form.set('title', 'x'.repeat(121));
-    form.set('conditionLine', 'Good condition');
     form.set('priceCents', '2500');
     form.set('sourceUrl', 'javascript:alert(1)');
     form.set('photo', new Blob([photo], { type: 'image/webp' }), 'photo.webp');

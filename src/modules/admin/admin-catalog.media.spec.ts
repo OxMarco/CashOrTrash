@@ -3,6 +3,7 @@ import { Repository } from 'typeorm';
 import { Queue } from 'bullmq';
 
 import { CatalogService } from '../catalog/catalog.service';
+import { CurrencyService } from '../currency/currency.service';
 import { Item } from '../catalog/entities/item.entity';
 import { Theme } from '../catalog/entities/theme.entity';
 import { ImageProcessor } from '../media/image-processor.service';
@@ -16,6 +17,11 @@ import { AdminCatalogService } from './admin-catalog.service';
  * orphans is `MediaGcService`'s job, and its grace period is what makes the
  * decision safe.
  */
+/** Neither case here turns on the rate, only on what happens after the store. */
+const usdOnly = {
+  toUsdCents: (minorUnits: number) => minorUnits,
+} as unknown as CurrencyService;
+
 describe('AdminCatalogService media cleanup', () => {
   it('leaves the blob for the graced sweep when the item insert fails', async () => {
     const digest = 'a'.repeat(64);
@@ -44,6 +50,7 @@ describe('AdminCatalogService media cleanup', () => {
       processor,
       store,
       {} as CatalogService,
+      usdOnly,
       {} as Queue,
       {
         getOrThrow: () => ({ root: '/tmp/media', publicBase: '' }),
@@ -55,8 +62,8 @@ describe('AdminCatalogService media cleanup', () => {
         {
           themeId: 1,
           title: 'Watch',
-          conditionLine: 'Used',
-          priceCents: 10_000,
+          priceMinorUnits: 10_000,
+          currency: 'USD' as const,
         },
         Buffer.from('upload'),
       ),
@@ -92,6 +99,7 @@ describe('AdminCatalogService media cleanup', () => {
       } as unknown as ImageProcessor,
       store,
       {} as CatalogService,
+      usdOnly,
       {} as Queue,
       {
         getOrThrow: () => ({ root: '/tmp/media', publicBase: '' }),
@@ -103,8 +111,8 @@ describe('AdminCatalogService media cleanup', () => {
         {
           themeId: 1,
           title: 'Watch',
-          conditionLine: 'Used',
-          priceCents: 10_000,
+          priceMinorUnits: 10_000,
+          currency: 'USD' as const,
         },
         Buffer.from('upload'),
       ),

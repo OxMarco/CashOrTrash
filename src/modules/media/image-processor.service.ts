@@ -21,7 +21,11 @@ export const MAX_SOURCE_PIXELS = 40_000_000;
 const WEBP = { quality: 82, effort: 5 } as const;
 
 export type ImageRejection =
-  'not-an-image' | 'animated' | 'too-large' | 'decode-failed';
+  | 'not-an-image'
+  | 'animated'
+  | 'too-large'
+  | 'decode-failed'
+  | 'unsupported-format';
 
 export class ImageRejectedError extends Error {
   constructor(
@@ -77,18 +81,55 @@ export class ImageProcessor {
     // survive the next line: sharp strips metadata unless asked to keep it, so a
     // marketplace listing's GPS location and photographer's name stay out of a
     // file the game serves publicly.
-    const bytes = await sharp(input, {
-      limitInputPixels: MAX_SOURCE_PIXELS,
-    })
-      .rotate()
-      .resize(CARD_WIDTH, CARD_HEIGHT, {
-        fit: 'cover',
-        position: 'attention',
+    //
+    // Guarded, because `probe()` only read the header. A file can describe
+    // itself perfectly and still fail here — a download that stopped early, a
+    // codec this build of libvips has no decoder for — and an escaping sharp
+    // error is a 500 on an upload the operator could have fixed by picking a
+    // different file.
+    let bytes: Buffer;
+    try {
+      bytes = await sharp(input, {
+        limitInputPixels: MAX_SOURCE_PIXELS,
       })
-      .webp(WEBP)
-      .toBuffer();
+        .rotate()
+        .resize(CARD_WIDTH, CARD_HEIGHT, {
+          fit: 'cover',
+          position: 'attention',
+        })
+        .webp(WEBP)
+        .toBuffer();
+    } catch (error) {
+      throw this.undecodable(metadata, error as Error);
+    }
 
     return { digest: digestOf(bytes), bytes };
+  }
+
+  /**
+   * Why a file that parsed as an image would not decode.
+   *
+   * HEIC is the case worth naming. It is what an iPhone hands over unless the
+   * owner has changed a setting, and sharp's prebuilt libvips reads its header
+   * — dimensions, orientation, everything — while carrying no HEVC decoder to
+   * turn that into pixels. "Could not decode image" would send the operator
+   * looking for a corrupt file; the fix is a two-second export.
+   *
+   * Decided from the failure rather than refused up front on `compression`, so
+   * a build of libvips that *does* carry the decoder simply works.
+   */
+  private undecodable(metadata: Metadata, error: Error): ImageRejectedError {
+    if (metadata.format === 'heif' && metadata.compression === 'hevc') {
+      return new ImageRejectedError(
+        'unsupported-format',
+        'HEIC photographs cannot be decoded here. Export the picture as JPEG ' +
+          'or PNG and upload that.',
+      );
+    }
+    return new ImageRejectedError(
+      'decode-failed',
+      `Could not decode image: ${error.message.split('\n')[0]}`,
+    );
   }
 
   private async probe(input: Buffer): Promise<Metadata> {

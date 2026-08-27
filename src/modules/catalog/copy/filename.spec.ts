@@ -17,7 +17,7 @@ describe('parseFilename', () => {
 
     expect(parsed?.priceCents).toBe(2_060_000);
     expect(parsed?.fallbackTitle).toBe('Rolex Daytona');
-    expect(parsed?.fallbackCondition).toBe('2016 · used');
+    expect(parsed?.fallbackCondition).toBe('2016');
   });
 
   it.each(['jpg', 'jpeg', 'png', 'webp', 'avif'])(
@@ -67,17 +67,39 @@ describe('titleCase', () => {
 });
 
 describe('splitCondition', () => {
-  it('falls back to a plain condition when the filename says nothing', () => {
+  /**
+   * The whole point of the field: it reports what the filename said, and a
+   * filename that said nothing about condition reports nothing. It used to
+   * answer "Used" here, which the copywriter is told to treat as fact and duly
+   * wrote into the description — "Used · 81m² apartment in Piazza Bologna",
+   * a classification invented one layer down and asserted two layers up.
+   */
+  it('says nothing when the filename said nothing', () => {
     expect(splitCondition('pebble mouse')).toEqual({
       title: 'pebble mouse',
-      conditionLine: 'Used',
+      conditionLine: '',
+    });
+  });
+
+  /** A year is an era. It is not evidence that the object is worn. */
+  it('carries a model year through without calling it wear', () => {
+    expect(splitCondition('bmw m4 competition 2025')).toEqual({
+      title: 'bmw m4 competition',
+      conditionLine: '2025',
     });
   });
 
   it('does not mistake a number that is not a year for one', () => {
-    expect(splitCondition('bmw m4 competition 2025').conditionLine).toBe(
-      '2025 · used',
+    expect(splitCondition('aula f99 pro keyboard')).toEqual({
+      title: 'aula f99 pro keyboard',
+      conditionLine: '',
+    });
+  });
+
+  /** A grade is the one case where the filename genuinely knows. */
+  it('keeps a grader verdict, which is a real condition statement', () => {
+    expect(splitCondition('mtg black lotus beta good').conditionLine).toBe(
+      'Good',
     );
-    expect(splitCondition('aula f99 pro keyboard').conditionLine).toBe('Used');
   });
 });

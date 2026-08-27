@@ -69,6 +69,44 @@ export async function createTestApp(): Promise<TestApp> {
   };
 }
 
+/** Postgres' "deadlock detected". */
+const PG_DEADLOCK = '40P01';
+
+/**
+ * The reset, retried on a deadlock.
+ *
+ * A replica under test is a real one: `JobsModule` queues a catch-up pass at
+ * boot and the repeatable jobs fire on their own clock, so `theme-stats-recompute`
+ * can be writing `theme_stat` — one of the tables below — at the moment a spec
+ * asks for a clean slate. `TRUNCATE` wants ACCESS EXCLUSIVE on every table at
+ * once; a job holding one row lock and reaching for another is all it takes for
+ * the two to cross, and Postgres shoots one of them.
+ *
+ * Retried rather than prevented, because the alternative is a test replica that
+ * runs no background work and therefore proves less than the real thing. A
+ * deadlock is transient by definition — the loser rolls back, the winner
+ * finishes, and the next attempt is uncontended. `TRUNCATE` is idempotent, so
+ * repeating it costs nothing.
+ *
+ * The race predates this helper; what changes its odds is anything that shifts
+ * boot timing, which is why it surfaces as an unrelated suite failing
+ * intermittently after a module graph changes somewhere else entirely.
+ */
+async function truncateGameplay(dataSource: DataSource): Promise<void> {
+  const sql = `TRUNCATE ${GAMEPLAY_TABLES.join(', ')} RESTART IDENTITY CASCADE`;
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await dataSource.query(sql);
+      return;
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      if (code !== PG_DEADLOCK || attempt === 5) throw error;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 50));
+    }
+  }
+}
+
 /**
  * Tables that hold play, as opposed to catalogue. The catalogue is seeded once
  * in globalSetup and left alone — reseeding between specs would renumber
@@ -94,9 +132,7 @@ export async function resetGameplayState(ctx: {
   dataSource: DataSource;
   redis: Redis;
 }): Promise<void> {
-  await ctx.dataSource.query(
-    `TRUNCATE ${GAMEPLAY_TABLES.join(', ')} RESTART IDENTITY CASCADE`,
-  );
+  await truncateGameplay(ctx.dataSource);
 
   // Not FLUSHDB: BullMQ's job schedulers are registered once, at boot, and
   // flushing would delete them — leaving the app in a state no real replica is

@@ -68,12 +68,19 @@ export class Item {
   sourceHash: string | null;
 
   /**
-   * Its path under `items/`, e.g. `watches/rolex daytona 2016_20600.webp`.
+   * The words this item arrived with, kept because `title` does not keep them.
    *
-   * Carries the price and the category, so comparing it against the file on
-   * disk is how a rename is noticed: the same bytes under a new price get the
-   * price rewritten, and under new prose get the copy rewritten, neither of
-   * which is a new item.
+   * Two eras. The boot importer wrote the file's path under `items/`, e.g.
+   * `watches/rolex daytona 2016_20600.webp`, and compared it against the tree
+   * to notice a rename. The portal writes what the operator typed into the name
+   * field — which is the same thing in every way that matters here: the human's
+   * own description of the object, before a model touched it.
+   *
+   * It has to be kept somewhere, because the copy pass *overwrites* `title`.
+   * Without this column the second pass over an item would read the model's own
+   * title as though it were the source text, and every rewrite would drift a
+   * step further from what was actually uploaded — the m² falling out of
+   * "rome apartment 81m2 piazza bologna" and never coming back.
    */
   @Column({ type: 'varchar', length: 256, nullable: true })
   sourceName: string | null;

@@ -140,6 +140,30 @@ describe('the landing page', () => {
     expect(second.headers.etag).toBe(etag);
   });
 
+  /**
+   * The bug this guards against had no symptom on a first visit and no trace in
+   * the server logs: a 304's headers are merged into the stored response under
+   * RFC 9111, so a revalidation that omitted the override let helmet's deny-all
+   * policy overwrite the cached one. Every visit after the first rendered a
+   * blank page with a console full of blocked inline style and script.
+   */
+  it('repeats the policy on the 304, so a revalidation cannot overwrite it', async () => {
+    const first = await app.inject({ method: 'GET', url: '/' });
+    const revalidated = await app.inject({
+      method: 'GET',
+      url: '/',
+      headers: { 'if-none-match': first.headers.etag as string },
+    });
+
+    expect(revalidated.statusCode).toBe(304);
+    expect(revalidated.headers['content-security-policy']).toBe(
+      first.headers['content-security-policy'],
+    );
+    expect(revalidated.headers['content-security-policy']).toContain(
+      "style-src 'unsafe-inline'",
+    );
+  });
+
   it('does not answer a stale If-None-Match with 304', async () => {
     const response = await app.inject({
       method: 'GET',

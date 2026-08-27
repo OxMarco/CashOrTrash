@@ -2,6 +2,12 @@
    one operator's page, and a toolchain would outweigh it. */
 (() => {
   const TOKEN_KEY = 'cashortrash.admin.token';
+  /* Mirrors SUPPORTED_CURRENCIES; the server refuses anything else outright.
+     Dollars first and preselected, because that is what the catalogue stores
+     and what an operator who ignores this field means. */
+  const CURRENCY_OPTIONS = ['USD', 'EUR', 'GBP']
+    .map((code) => `<option value="${code}">${code}</option>`)
+    .join('');
   const $ = (id) => document.getElementById(id);
   let token = null;
   let themes = [];
@@ -215,8 +221,8 @@
         <legend>${escapeHtml(file.name)}</legend>
         <div class="row">
           <div><label>Name</label><input data-field="title" value="${escapeHtml(parsed.title)}" /></div>
-          <div><label>Condition</label><input data-field="condition" value="${escapeHtml(parsed.condition)}" placeholder="2019, Near Mint…" /></div>
-          <div><label>Price (USD)</label><input data-field="price" type="number" step="0.01" value="${parsed.price ?? ''}" /></div>
+          <div><label>Price</label><input data-field="price" type="number" step="0.01" value="${parsed.price ?? ''}" /></div>
+          <div><label>Currency</label><select data-field="currency">${CURRENCY_OPTIONS}</select></div>
         </div>
         <label>Price source (optional)</label>
         <input data-field="source" placeholder="https://…" />
@@ -242,8 +248,10 @@
         form.append('photo', file);
         form.append('themeId', $('item-theme').value);
         form.append('title', value('title'));
-        form.append('conditionLine', value('condition'));
+        // Minor units of the selected currency, not of the dollar. The server
+        // converts — doing it here would leave the portal holding a rate.
         form.append('priceCents', String(Math.round(price * 100)));
+        form.append('currency', value('currency'));
         if (value('source')) form.append('sourceUrl', value('source'));
 
         row.querySelector('[data-save]').disabled = true;
@@ -266,25 +274,23 @@
    * upload is validated server-side regardless of what the form was pre-filled
    * with. Splits on the LAST underscore so `cessna 150_1967_82500` prices at
    * 82500 rather than failing on `1967_82500`.
+   *
+   * A trailing year is left on the title rather than stripped into a condition
+   * field, which no longer exists here. The copywriter reads the title, so a
+   * `cessna 150 1967` that keeps its year describes the object better than one
+   * that quietly dropped it.
    */
   function parseName(filename) {
     const base = filename.replace(/\.[^.]+$/, '');
     const cut = base.lastIndexOf('_');
-    if (cut <= 0) return { title: base.replace(/_/g, ' ').trim(), condition: '', price: null };
+    if (cut <= 0) return { title: base.replace(/_/g, ' ').trim(), price: null };
 
     const price = Number(base.slice(cut + 1));
-    const text = base.slice(0, cut).replace(/_/g, ' ').trim();
     if (!Number.isFinite(price) || price <= 0) {
-      return { title: base.replace(/_/g, ' ').trim(), condition: '', price: null };
+      return { title: base.replace(/_/g, ' ').trim(), price: null };
     }
 
-    // A trailing four-digit year is a condition, not part of the name.
-    const year = /\s(19|20)\d{2}$/.exec(text);
-    return {
-      title: year ? text.slice(0, year.index).trim() : text,
-      condition: year ? year[0].trim() : '',
-      price,
-    };
+    return { title: base.slice(0, cut).replace(/_/g, ' ').trim(), price };
   }
 
   // --- wiring ----------------------------------------------------------------

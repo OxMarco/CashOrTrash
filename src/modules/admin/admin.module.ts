@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CatalogModule } from '../catalog/catalog.module';
+import { CurrencyModule } from '../currency/currency.module';
 import { Item } from '../catalog/entities/item.entity';
 import { Theme } from '../catalog/entities/theme.entity';
 import { MAINTENANCE_QUEUE } from '../jobs/jobs.constants';
@@ -29,6 +30,7 @@ import { AdminJwtStrategy } from './strategies/admin-jwt.strategy';
     PassportModule,
     JwtModule.register({}),
     CatalogModule,
+    CurrencyModule,
     MediaModule,
     BullModule.registerQueue({ name: MAINTENANCE_QUEUE }),
   ],
