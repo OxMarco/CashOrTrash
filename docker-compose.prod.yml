@@ -233,6 +233,14 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     entrypoint: ['/bin/sh', '/db-backup.sh']
+    # tini as PID 1: bare `sh` does not forward SIGTERM to the `sleep` it is
+    # blocked in, so without this the container ignores the stop signal and is
+    # SIGKILLed after the grace period (exit 137) on every `compose down`.
+    init: true
+    # Long enough for an in-flight pg_dump + media tar to finish rather than be
+    # interrupted. An interrupted run is safe (it writes to .tmp and retries on
+    # the next tick) — this just avoids throwing that work away.
+    stop_grace_period: 60s
     environment:
       # Standard libpq env vars so pg_dump/pg_restore need no flags.
       PGHOST: postgres
@@ -324,6 +332,10 @@ services:
     # changes before. Bump deliberately, not via a routine `compose pull`.
     image: traefik:v3.7.6
     restart: unless-stopped
+    # Traefik drains in-flight connections for up to 10s on SIGTERM, which is
+    # exactly Compose's default grace period — so it lost the race and was
+    # SIGKILLed (exit 137). Give the drain room to complete.
+    stop_grace_period: 15s
     ports:
       - '80:80'
       - '443:443'
