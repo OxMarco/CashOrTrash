@@ -15,6 +15,7 @@ import { toDto } from 'src/common/serialization/to-dto';
 import { todayUtc } from 'src/common/utils/date.util';
 import { AppConfig } from 'src/config/configuration';
 import { CatalogService } from '../catalog/catalog.service';
+import { MYSTERY_BONUS_PCT } from '../catalog/mystery';
 import { LocalisedCopy } from '../catalog/catalog.service';
 import { Item } from '../catalog/entities/item.entity';
 import { ItemCopy } from '../catalog/entities/item-copy.entity';
@@ -33,6 +34,17 @@ import { ScoringService } from '../scoring/scoring.service';
 import { CURRENT_SCORING } from '../scoring/constants';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
+import {
+  BET_OFF_SLIDER,
+  ROUND_CURRENCY_MISMATCH,
+  ROUND_MOVED_ON,
+  ROUND_NOT_SERVED,
+  ROUND_OUT_OF_ORDER,
+  ROUND_TOO_FAST,
+  ROUND_UNKNOWN,
+  SESSION_FINISHED,
+  roundProblem,
+} from './round-problems';
 import {
   CreateSessionDto,
   CurrentRoundDto,
@@ -129,10 +141,14 @@ export class SessionsService {
     const session = await this.getOwnedSession(sessionId, userId);
 
     if (session.status !== SessionStatus.ACTIVE) {
-      throw new ConflictException('This session is already finished');
+      throw new ConflictException(
+        roundProblem(SESSION_FINISHED, 'This session is already finished'),
+      );
     }
     if (session.currentIndex >= session.itemIds.length) {
-      throw new ConflictException('No rounds left in this session');
+      throw new ConflictException(
+        roundProblem(SESSION_FINISHED, 'No rounds left in this session'),
+      );
     }
 
     const itemId = session.itemIds[session.currentIndex];
@@ -189,7 +205,10 @@ export class SessionsService {
                 `${MAX_ROUND_RESTARTS} restarts; a bet keeps beating the fetch`,
             );
             throw new ConflictException(
-              'This round moved on while it was being fetched — ask again',
+              roundProblem(
+                ROUND_MOVED_ON,
+                'This round moved on while it was being fetched — ask again',
+              ),
             );
           }
           return this.getCurrentRound(
@@ -239,7 +258,10 @@ export class SessionsService {
         if (current.currentIndex !== session.currentIndex) {
           if (attempt >= MAX_ROUND_RESTARTS) {
             throw new ConflictException(
-              'This round moved on while it was being fetched — ask again',
+              roundProblem(
+                ROUND_MOVED_ON,
+                'This round moved on while it was being fetched — ask again',
+              ),
             );
           }
           return this.getCurrentRound(
@@ -394,7 +416,9 @@ export class SessionsService {
       }
       matchId = session.matchId;
       if (roundIndex < 0 || roundIndex >= session.itemIds.length) {
-        throw new BadRequestException('No such round in this session');
+        throw new BadRequestException(
+          roundProblem(ROUND_UNKNOWN, 'No such round in this session'),
+        );
       }
 
       const requestedCurrency = dto.currency ?? DEFAULT_CURRENCY;
@@ -429,11 +453,16 @@ export class SessionsService {
       }
 
       if (session.status !== SessionStatus.ACTIVE) {
-        throw new ConflictException('This session is already finished');
+        throw new ConflictException(
+          roundProblem(SESSION_FINISHED, 'This session is already finished'),
+        );
       }
       if (roundIndex !== session.currentIndex) {
         throw new ConflictException(
-          `Out of order: expected round ${session.currentIndex}`,
+          roundProblem(
+            ROUND_OUT_OF_ORDER,
+            `Out of order: expected round ${session.currentIndex}`,
+          ),
         );
       }
 
@@ -443,9 +472,12 @@ export class SessionsService {
         requestedCurrency !== session.currentCurrency
       ) {
         throw new BadRequestException(
-          `This round was dealt in ${session.currentCurrency}. Re-fetch it ` +
-            `with ?currency=${requestedCurrency} to play it in ` +
-            `${requestedCurrency}.`,
+          roundProblem(
+            ROUND_CURRENCY_MISMATCH,
+            `This round was dealt in ${session.currentCurrency}. Re-fetch it ` +
+              `with ?currency=${requestedCurrency} to play it in ` +
+              `${requestedCurrency}.`,
+          ),
         );
       }
       // Whether the grid below comes from the quote the round was dealt with or
@@ -487,9 +519,16 @@ export class SessionsService {
       );
 
       // 3. Score. Pure, no I/O.
+      // A category's bonus is the number an admin set on its row. A themeless
+      // round has none to read: for the mystery mix that is the constant
+      // bonus the mix is played for, and for the daily — which is themeless
+      // because the calendar chose the items, not because the player gave up
+      // knowing them — it stays nothing.
       const themeBonusPct = session.themeId
         ? (await this.catalog.getThemeById(session.themeId)).bonusPct
-        : 0;
+        : session.mode === GameMode.DAILY
+          ? 0
+          : MYSTERY_BONUS_PCT;
 
       const bounds = this.boundsFor(session, item, roundIndex);
       const scored = this.scoring.score(
@@ -803,7 +842,9 @@ export class SessionsService {
     );
 
     if (loCents >= hiCents) {
-      throw new BadRequestException('loCents must be below hiCents');
+      throw new BadRequestException(
+        roundProblem(BET_OFF_SLIDER, 'loCents must be below hiCents'),
+      );
     }
 
     const drifts = !quotePinned && currency !== DEFAULT_CURRENCY;
@@ -811,14 +852,18 @@ export class SessionsService {
     const ceiling = drifts ? grid.max + grid.increment : grid.max;
 
     if (loCents < floor || hiCents > ceiling) {
-      throw new BadRequestException('Bet falls outside the slider bounds');
+      throw new BadRequestException(
+        roundProblem(BET_OFF_SLIDER, 'Bet falls outside the slider bounds'),
+      );
     }
     if (
       !drifts &&
       (!this.pricing.isSnapped(loCents, grid.min, grid.max) ||
         !this.pricing.isSnapped(hiCents, grid.min, grid.max))
     ) {
-      throw new BadRequestException('Bet must land on the slider increment');
+      throw new BadRequestException(
+        roundProblem(BET_OFF_SLIDER, 'Bet must land on the slider increment'),
+      );
     }
 
     return this.enforceDwell(session);
@@ -834,14 +879,18 @@ export class SessionsService {
     // whenever either is armed.
     if (this.app.roundSeconds > 0 || this.app.minRoundSeconds > 0) {
       if (!session.currentServedAt) {
-        throw new BadRequestException('Load the round before placing a bet');
+        throw new BadRequestException(
+          roundProblem(ROUND_NOT_SERVED, 'Load the round before placing a bet'),
+        );
       }
     }
 
     if (this.app.minRoundSeconds > 0 && session.currentServedAt) {
       const elapsed = (Date.now() - session.currentServedAt.getTime()) / 1000;
       if (elapsed < this.app.minRoundSeconds) {
-        throw new BadRequestException('Take a moment to look at the item');
+        throw new BadRequestException(
+          roundProblem(ROUND_TOO_FAST, 'Take a moment to look at the item'),
+        );
       }
     }
   }

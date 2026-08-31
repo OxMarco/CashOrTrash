@@ -62,12 +62,13 @@ export class Match {
   @Column({ type: 'varchar', length: 16, nullable: true })
   scoringVersion: string | null;
 
-  @Column({ type: 'int' })
-  themeId: number;
+  /** Null for the mystery mix, which is drawn from every category at once. */
+  @Column({ type: 'int', nullable: true })
+  themeId: number | null;
 
-  @ManyToOne(() => Theme, { onDelete: 'RESTRICT' })
+  @ManyToOne(() => Theme, { onDelete: 'RESTRICT', nullable: true })
   @JoinColumn({ name: 'themeId', foreignKeyConstraintName: 'fk_match_theme' })
-  theme?: Theme;
+  theme?: Theme | null;
 
   /** Short, human-shareable, unambiguous alphabet. Carried in the deep link. */
   @Index('uq_match_invite_code', { unique: true })

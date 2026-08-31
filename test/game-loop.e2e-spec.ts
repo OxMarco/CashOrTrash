@@ -3,6 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { addDays, todayUtc } from '../src/common/utils/date.util';
 import { AppConfig } from '../src/config/configuration';
 import { dailyKey } from '../src/modules/leaderboard/leaderboard.keys';
+import {
+  ROUND_NOT_SERVED,
+  ROUND_TOO_FAST,
+} from '../src/modules/sessions/round-problems';
 import { Api } from './support/api-client';
 import { playRound, registerPlayer } from './support/players';
 import { createTestApp, resetGameplayState, TestApp } from './support/test-app';
@@ -358,6 +362,10 @@ describe('the game loop', () => {
         const notServed = await player.api.post(path, bet);
         expect(notServed.status).toBe(400);
         expect(notServed.body.title).toContain('Load the round');
+        // `type` is the half the app reads: it picks its own sentence, in its
+        // own language, from the slug. Asserted here so rewording the title
+        // above stays free and renaming the slug does not.
+        expect(notServed.body.type).toBe(ROUND_NOT_SERVED);
 
         expect(
           (await player.api.get(`/v1/sessions/${session.body.id}/current`))
@@ -366,6 +374,7 @@ describe('the game loop', () => {
         const tooFast = await player.api.post(path, bet);
         expect(tooFast.status).toBe(400);
         expect(tooFast.body.title).toContain('Take a moment');
+        expect(tooFast.body.type).toBe(ROUND_TOO_FAST);
 
         await ctx.dataSource.query(
           `UPDATE game_session

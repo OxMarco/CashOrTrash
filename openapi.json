@@ -1414,7 +1414,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 64,
-            "description": "Required for quick and h2h rounds; ignored for daily, which has no theme picker."
+            "description": "Required for quick and h2h rounds; ignored for daily, which has no theme picker. The reserved slug \"mystery-mix\" is not a category: it deals five items drawn from the whole catalogue."
           },
           "inviteCode": {
             "type": "string",

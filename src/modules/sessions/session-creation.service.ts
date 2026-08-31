@@ -18,6 +18,7 @@ import { toDto } from 'src/common/serialization/to-dto';
 import { todayUtc } from 'src/common/utils/date.util';
 import { AppConfig } from 'src/config/configuration';
 import { CatalogService } from '../catalog/catalog.service';
+import { isMysterySlug, MYSTERY_THEME_SLUG } from '../catalog/mystery';
 import { deriveSliderBoundsSet } from '../catalog/slider';
 import { DailyService } from '../daily/daily.service';
 import { inviteHasExpired } from '../matches/match-expiry';
@@ -112,9 +113,16 @@ export class SessionCreationService {
       if (!player) throw new NotFoundException('Player not found');
       await this.enforceRoundBudget(userId, manager);
 
-      const theme = await this.catalog.getThemeBySlug(themeSlug);
+      // The mystery mix is a reserved slug, not a row: it deals from the whole
+      // active catalogue, which is the null-theme draw the daily challenge
+      // already uses. A session dealt that way has no theme to point at, and
+      // `themeId` stays null exactly as it does for a daily.
+      const theme = isMysterySlug(themeSlug)
+        ? null
+        : await this.catalog.getThemeBySlug(themeSlug);
+      const themeId = theme && !theme.isMystery ? theme.id : null;
       const itemIds = await this.catalog.drawItemIds(
-        theme.isMystery ? null : theme.id,
+        themeId,
         this.app.roundsPerSession,
         `quick:${userId}:${randomUUID()}`,
         { reserveDaily: true, excludeSeenBy: userId },
@@ -138,7 +146,7 @@ export class SessionCreationService {
           id,
           userId,
           mode: GameMode.QUICK,
-          themeId: theme.id,
+          themeId,
           itemIds,
           ...sliderBounds,
           scoringVersion: CURRENT_SCORING.version,
@@ -232,6 +240,10 @@ export class SessionCreationService {
     const theme = session.themeId
       ? await this.catalog.getThemeById(session.themeId)
       : null;
+    // A themeless daily is the calendar's round and names no category; a
+    // themeless quick or head-to-head is the mystery mix, and the client
+    // resolves that slug against the card it is already showing.
+    const mystery = !theme && session.mode !== GameMode.DAILY;
     return toDto(SessionDto, {
       id: session.id,
       mode: session.mode,
@@ -239,8 +251,8 @@ export class SessionCreationService {
       currentIndex: session.currentIndex,
       roundCount: session.itemIds.length,
       totalScore: session.totalScore,
-      themeSlug: theme?.slug ?? null,
-      themeName: theme?.name ?? null,
+      themeSlug: theme?.slug ?? (mystery ? MYSTERY_THEME_SLUG : null),
+      themeName: theme?.name ?? (mystery ? 'Mystery mix' : null),
       matchId: session.matchId,
       resumed,
     });

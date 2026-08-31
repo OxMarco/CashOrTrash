@@ -18,6 +18,7 @@ import {
 import { toDto } from 'src/common/serialization/to-dto';
 import { AppConfig } from 'src/config/configuration';
 import { CatalogService } from '../catalog/catalog.service';
+import { isMysterySlug, MYSTERY_THEME_SLUG } from '../catalog/mystery';
 import { deriveSliderBoundsSet } from '../catalog/slider';
 import { CURRENT_SCORING } from '../scoring/constants';
 import { GameSession } from '../sessions/entities/game-session.entity';
@@ -55,9 +56,14 @@ export class MatchesService {
   }
 
   async create(hostUserId: number, themeSlug: string): Promise<MatchDto> {
-    const theme = await this.catalog.getThemeBySlug(themeSlug);
+    // As in `createQuick`: the mystery mix is a reserved slug rather than a
+    // category, and both players face the same whole-catalogue draw.
+    const theme = isMysterySlug(themeSlug)
+      ? null
+      : await this.catalog.getThemeBySlug(themeSlug);
+    const themeId = theme && !theme.isMystery ? theme.id : null;
     const itemIds = await this.catalog.drawItemIds(
-      theme.isMystery ? null : theme.id,
+      themeId,
       this.app.roundsPerSession,
       `match:${randomUUID()}`,
       // Only the host's history is known here — the guest has not joined yet,
@@ -83,7 +89,7 @@ export class MatchesService {
             itemIds,
             ...sliderBounds,
             scoringVersion: CURRENT_SCORING.version,
-            themeId: theme.id,
+            themeId,
             inviteCode: generateCode(),
             hostUserId,
           }),
@@ -215,7 +221,7 @@ export class MatchesService {
     // Presence for the whole room once, then read per player below. Both
     // players are in the same room, and the lookup is a cluster-wide broadcast.
     const [theme, online] = await Promise.all([
-      this.catalog.getThemeById(match.themeId),
+      match.themeId ? this.catalog.getThemeById(match.themeId) : null,
       this.gateway.onlineUserIds(match.id),
     ]);
 
@@ -231,7 +237,7 @@ export class MatchesService {
       inviteCode: match.inviteCode,
       deepLink: `${this.app.deepLinkBase}/${match.inviteCode}`,
       status: match.status,
-      themeSlug: theme.slug,
+      themeSlug: theme?.slug ?? MYSTERY_THEME_SLUG,
       roundCount: match.itemIds.length,
       host,
       guest,

@@ -31,7 +31,9 @@ export class CreateSessionDto {
 
   @ApiPropertyOptional({
     description:
-      'Required for quick and h2h rounds; ignored for daily, which has no theme picker.',
+      'Required for quick and h2h rounds; ignored for daily, which has no ' +
+      'theme picker. The reserved slug "mystery-mix" is not a category: it ' +
+      'deals five items drawn from the whole catalogue.',
   })
   @IsOptional()
   @IsString()

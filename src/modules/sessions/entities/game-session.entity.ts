@@ -33,11 +33,16 @@ export enum SessionStatus {
   unique: true,
   where: `mode = 'h2h' AND "matchId" IS NOT NULL`,
 })
+// A null `themeId` no longer distinguishes daily from the rest: quick and
+// head-to-head are dealt themeless too when the player picks the mystery mix,
+// which draws from the whole catalogue rather than from a category. What still
+// separates the three modes is the field each one owns — `dailyDate` for the
+// calendar's round, `matchId` for a match — so those are what this checks.
 @Check(
   'ck_game_session_mode_fields',
   `("mode" = 'daily' AND "dailyDate" IS NOT NULL AND "themeId" IS NULL AND "matchId" IS NULL) OR
-   ("mode" = 'quick' AND "dailyDate" IS NULL AND "themeId" IS NOT NULL AND "matchId" IS NULL) OR
-   ("mode" = 'h2h' AND "dailyDate" IS NULL AND "themeId" IS NOT NULL AND "matchId" IS NOT NULL)`,
+   ("mode" = 'quick' AND "dailyDate" IS NULL AND "matchId" IS NULL) OR
+   ("mode" = 'h2h' AND "dailyDate" IS NULL AND "matchId" IS NOT NULL)`,
 )
 @Check(
   'ck_game_session_progress',

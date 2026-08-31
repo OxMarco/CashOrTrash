@@ -17,6 +17,7 @@ import { Currency } from 'src/modules/currency/currency.constants';
 import { CurrencyService } from 'src/modules/currency/currency.service';
 import { Item, ItemOrigin } from 'src/modules/catalog/entities/item.entity';
 import { Theme } from 'src/modules/catalog/entities/theme.entity';
+import { isMysterySlug } from 'src/modules/catalog/mystery';
 import {
   MAX_IMPORT_PRICE_CENTS,
   MIN_IMPORT_PRICE_CENTS,
@@ -142,6 +143,12 @@ export class AdminCatalogService {
     if (!slug) {
       throw new BadRequestException(
         'That name has no letters or digits to build a slug from.',
+      );
+    }
+    if (isMysterySlug(slug)) {
+      throw new ConflictException(
+        `"${slug}" is reserved for the mystery mix, which every build offers ` +
+          'already. Pick another name.',
       );
     }
     if (await this.themes.findOne({ where: { slug }, select: { id: true } })) {
