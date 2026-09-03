@@ -38,6 +38,10 @@ export const UNPREFIXED_ROUTES = [
   'privacy',
   'support',
   'terms',
+  // The `/terms` alias the App Store listing links to. Unprefixed for the same
+  // reason as the document it redirects to: it is a URL a person follows, and
+  // one App Review checks.
+  'tos',
   'match/*path',
   '.well-known/*path',
   'health/live',

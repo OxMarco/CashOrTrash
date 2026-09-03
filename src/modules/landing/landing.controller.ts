@@ -193,6 +193,21 @@ export class LandingController {
     );
   }
 
+  /**
+   * The URL the App Store listing was published with. The document has always
+   * been served at `/terms`, so every visitor who followed the store's support
+   * link got a 404 — which is what App Review flagged under guideline 1.5.
+   *
+   * Kept permanently rather than retired once the listing is corrected: store
+   * metadata outlives any one build, and the same shape of link is already in
+   * screenshots and messages that cannot be edited. A 301 so `/terms` stays the
+   * one canonical URL and a crawler that follows this learns it.
+   */
+  @Get('tos')
+  tos(@Res() reply: FastifyReply): void {
+    void reply.redirect('/terms', 301);
+  }
+
   @Get('match/:inviteCode')
   matchFallback(
     @Param('inviteCode') inviteCode: string,

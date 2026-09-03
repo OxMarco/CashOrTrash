@@ -53,6 +53,23 @@ a deployment pass; supply the real release inputs instead.
 - [ ] Fetch `/.well-known/apple-app-site-association` and
   `/.well-known/assetlinks.json` from the public HTTPS hostname and compare the
   identifiers with the signed store builds.
+- [ ] Request every URL the store listings point at and confirm each answers
+  200, following redirects. App Review rejected 1.0.0 (2) under guideline 1.5
+  over a Support URL of `/tos`, which this server has never served — the
+  document is at `/terms`, and `/tos` now redirects there. The listing fields
+  are the thing to check, not the routes: nothing in this repository fails when
+  App Store Connect points somewhere that does not exist.
+
+      for path in / privacy support terms tos; do \
+        printf '%-9s ' "$path"; \
+        curl -sL -o /dev/null -w '%{http_code} %{url_effective}\n' \
+          "https://<domain>/$path"; \
+      done
+
+- [ ] Confirm the iOS **Support URL** in App Store Connect is
+  `https://<domain>/support` and not the terms or privacy document. Guideline
+  1.5 wants support information there — a terms page that returns 200 still
+  fails it.
 - [ ] Exercise anonymous sign-in, one quick game, one daily game, one
   head-to-head invite, push opt-in/unregister, and in-app account deletion on
   the deployed API.

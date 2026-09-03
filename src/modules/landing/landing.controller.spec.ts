@@ -80,6 +80,15 @@ describe('the landing page', () => {
     },
   );
 
+  // The store listing's support link points here. It 404'd through two review
+  // cycles, so the alias is pinned rather than left to be re-derived.
+  it("redirects the store listing's /tos link to the terms", async () => {
+    const response = await app.inject({ method: 'GET', url: '/tos' });
+
+    expect(response.statusCode).toBe(301);
+    expect(response.headers.location).toBe('/terms');
+  });
+
   it('serves the invite fallback outside v1', async () => {
     const match = await app.inject({ method: 'GET', url: '/match/K7PXQ2' });
     expect(match.statusCode).toBe(200);
