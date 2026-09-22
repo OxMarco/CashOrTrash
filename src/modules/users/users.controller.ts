@@ -16,6 +16,7 @@ import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { Public } from 'src/common/decorators/public.decorator';
 import { toDto } from 'src/common/serialization/to-dto';
 import { todayUtc } from 'src/common/utils/date.util';
+import { BillingService } from '../billing/billing.service';
 import { DEFAULT_LANGUAGE } from '../catalog/language.constants';
 import { DEFAULT_CURRENCY } from '../currency/currency.constants';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
@@ -41,6 +42,7 @@ export class MeController {
   constructor(
     private readonly users: UsersService,
     private readonly leaderboard: LeaderboardService,
+    private readonly billing: BillingService,
   ) {}
 
   @Get()
@@ -56,16 +58,18 @@ export class MeController {
   ): Promise<MeDto> {
     const today = todayUtc();
     const user = await this.users.getById(userId);
-    const [globalRank, dailyProgress, lastDailyMiss] = await Promise.all([
-      this.leaderboard.getRank('today', userId),
-      this.users.dailyProgress(userId, today),
-      this.users.lastDailyMiss(
-        userId,
-        today,
-        query.currency ?? DEFAULT_CURRENCY,
-        query.lang ?? DEFAULT_LANGUAGE,
-      ),
-    ]);
+    const [globalRank, dailyProgress, lastDailyMiss, billing] =
+      await Promise.all([
+        this.leaderboard.getRank('today', userId),
+        this.users.dailyProgress(userId, today),
+        this.users.lastDailyMiss(
+          userId,
+          today,
+          query.currency ?? DEFAULT_CURRENCY,
+          query.lang ?? DEFAULT_LANGUAGE,
+        ),
+        this.billing.state(user),
+      ]);
 
     return toDto(MeDto, {
       ...user,
@@ -73,6 +77,7 @@ export class MeController {
       globalRank,
       dailyProgress,
       lastDailyMiss,
+      billing,
     });
   }
 
@@ -86,9 +91,10 @@ export class MeController {
   ): Promise<MeDto> {
     const today = todayUtc();
     const user = await this.users.claimUsername(userId, dto.username);
-    const [globalRank, dailyProgress] = await Promise.all([
+    const [globalRank, dailyProgress, billing] = await Promise.all([
       this.leaderboard.getRank('today', userId),
       this.users.dailyProgress(userId, today),
+      this.billing.state(user),
     ]);
 
     return toDto(MeDto, {
@@ -96,6 +102,7 @@ export class MeController {
       streakDays: this.users.effectiveStreak(user, today),
       globalRank,
       dailyProgress,
+      billing,
       // The card this feeds is Home's, and Home re-reads `/me` after a claim.
       lastDailyMiss: null,
     });
@@ -107,7 +114,14 @@ export class MeController {
     summary: 'Permanently delete this player and their gameplay data.',
   })
   async deleteAccount(@CurrentUser('id') userId: number): Promise<void> {
+    const { billingId } = await this.users.getById(userId);
     await this.users.deleteAccount(userId);
+
+    // RevenueCat keeps its own record of the player — purchases, receipts —
+    // and that is theirs to have erased too. Queued after the commit, so a
+    // rollback never costs a live player their purchase history; the job's
+    // retries outlast an outage there.
+    await this.billing.scheduleCustomerDeletion(billingId);
 
     // Redis is a serving cache, not part of the deletion transaction. The
     // authoritative data is already gone even if this best-effort cleanup has

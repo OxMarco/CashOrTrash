@@ -16,6 +16,11 @@ a deployment pass; supply the real release inputs instead.
 - [ ] Replace every example value in the production `.env`, including `DOMAIN`,
   `SUPPORT_EMAIL`, `ACME_EMAIL`, three independent auth and game secrets, and
   `OPENAI_API_KEY`.
+- [ ] Set `REVENUECAT_SECRET_API_KEY` (a secret `sk_` key) and
+  `REVENUECAT_WEBHOOK_AUTH`; production refuses to boot without both. In the
+  RevenueCat dashboard, add a webhook to `https://<domain>/v1/webhooks/revenuecat`
+  with that value as its Authorization header, send its test event, and confirm
+  a 200. Then buy in sandbox and check `/v1/me` reports `billing.premium`.
 - [ ] Set `POSTGRES_PASSWORD` in the production `.env`. `docker-compose.prod.yml`
   passes it to the postgres, app and db-backup services and refuses to start
   without it. Postgres only reads it when the data volume is first created: on

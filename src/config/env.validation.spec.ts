@@ -18,6 +18,8 @@ const productionEnvironment = {
   ANDROID_SHA256_CERT_FINGERPRINT: '',
   ADMIN_PASSWORD_HASH: `${'a'.repeat(32)}:${'b'.repeat(128)}`,
   ADMIN_JWT_SECRET: 'admin-secret-with-at-least-32-characters',
+  REVENUECAT_SECRET_API_KEY: 'sk_test_revenuecat',
+  REVENUECAT_WEBHOOK_AUTH: 'webhook-secret-with-at-least-32-characters',
 };
 
 describe('production environment validation', () => {
@@ -175,6 +177,49 @@ describe('admin portal', () => {
     const { error } = envValidationSchema.validate({
       ...rest,
       NODE_ENV: 'development',
+    });
+    expect(error).toBeUndefined();
+  });
+});
+
+describe('billing', () => {
+  const withBilling = (overrides: Record<string, string | undefined>) => {
+    const environment: Record<string, unknown> = {
+      ...productionEnvironment,
+      ...overrides,
+    };
+    for (const key of Object.keys(overrides)) {
+      if (overrides[key] === undefined) delete environment[key];
+    }
+    return envValidationSchema.validate(environment);
+  };
+
+  // Without either, a purchase could never be confirmed or a renewal heard
+  // about, and a paying player would be held to the free limit.
+  it.each(['REVENUECAT_SECRET_API_KEY', 'REVENUECAT_WEBHOOK_AUTH'])(
+    'refuses a production boot with %s missing or empty',
+    (key) => {
+      expect(withBilling({ [key]: undefined }).error?.message).toContain(key);
+      expect(withBilling({ [key]: '' }).error?.message).toContain(key);
+    },
+  );
+
+  // The public SDK key (`appl_…`, `goog_…`) is the likeliest thing to paste
+  // here, and it cannot read a customer.
+  it('refuses a key that is not a secret key', () => {
+    const { error } = withBilling({ REVENUECAT_SECRET_API_KEY: 'appl_abc' });
+    expect(error?.message).toContain('REVENUECAT_SECRET_API_KEY');
+  });
+
+  it('draws the free line at five quick rounds a day by default', () => {
+    expect(withBilling({}).value.FREE_QUICK_ROUNDS_PER_DAY).toBe(5);
+  });
+
+  it('leaves billing optional outside production, so a checkout boots', () => {
+    const { error } = withBilling({
+      NODE_ENV: 'development',
+      REVENUECAT_SECRET_API_KEY: undefined,
+      REVENUECAT_WEBHOOK_AUTH: '',
     });
     expect(error).toBeUndefined();
   });

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { BillingModule } from '../billing/billing.module';
 import { ItemCopy } from '../catalog/entities/item-copy.entity';
 import { CurrencyModule } from '../currency/currency.module';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
@@ -14,6 +15,7 @@ import { UsersService } from './users.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, GameSession, SessionRound, ItemCopy]),
+    BillingModule,
     CurrencyModule,
     LeaderboardModule,
   ],

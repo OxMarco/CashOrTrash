@@ -155,6 +155,29 @@
         ]
       }
     },
+    "/v1/me/billing/sync": {
+      "post": {
+        "description": "Called after a purchase or restore so the unlock is immediate. The server asks RevenueCat; nothing in the request is taken as proof.",
+        "operationId": "BillingController_sync",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingStateDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Re-read the player’s entitlement from the store.",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
     "/v1/currencies": {
       "get": {
         "operationId": "CurrencyController_currencies",
@@ -1073,6 +1096,48 @@
           "photoUrl"
         ]
       },
+      "BillingStateDto": {
+        "type": "object",
+        "properties": {
+          "billingId": {
+            "type": "string",
+            "description": "The id to configure the RevenueCat SDK with. Not the player id, and not to be shown or logged."
+          },
+          "premium": {
+            "type": "boolean",
+            "description": "True while the premium entitlement is live."
+          },
+          "premiumExpiresAt": {
+            "format": "date-time",
+            "type": "string",
+            "nullable": true,
+            "description": "When premium runs out as last confirmed with the store; renewals move it. Null when free."
+          },
+          "freeQuickRoundsPerDay": {
+            "type": "number",
+            "nullable": true,
+            "description": "Quick rounds a free player gets per UTC day; null if unlimited."
+          },
+          "freeQuickRoundsRemaining": {
+            "type": "number",
+            "nullable": true,
+            "description": "Quick rounds left today; null if unlimited."
+          },
+          "freeQuickRoundsResetAt": {
+            "format": "date-time",
+            "type": "string",
+            "description": "When the free allowance refills — next UTC midnight."
+          }
+        },
+        "required": [
+          "billingId",
+          "premium",
+          "premiumExpiresAt",
+          "freeQuickRoundsPerDay",
+          "freeQuickRoundsRemaining",
+          "freeQuickRoundsResetAt"
+        ]
+      },
       "MeDto": {
         "type": "object",
         "properties": {
@@ -1107,6 +1172,14 @@
               }
             ]
           },
+          "billing": {
+            "description": "Premium, and what is left of the free allowance today.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BillingStateDto"
+              }
+            ]
+          },
           "id": {
             "type": "number"
           },
@@ -1130,6 +1203,7 @@
           "globalRank",
           "dailyProgress",
           "lastDailyMiss",
+          "billing",
           "id",
           "avatarSeed",
           "totalPoints",

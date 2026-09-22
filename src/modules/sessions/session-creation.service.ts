@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   GoneException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -16,7 +18,8 @@ import {
 } from 'src/common/database/pg-error-codes';
 import { toDto } from 'src/common/serialization/to-dto';
 import { todayUtc } from 'src/common/utils/date.util';
-import { AppConfig } from 'src/config/configuration';
+import { AppConfig, BillingConfig } from 'src/config/configuration';
+import { isPremium, quickRoundsToday } from '../billing/entitlement';
 import { CatalogService } from '../catalog/catalog.service';
 import { isMysterySlug, MYSTERY_THEME_SLUG } from '../catalog/mystery';
 import { deriveSliderBoundsSet } from '../catalog/slider';
@@ -36,6 +39,7 @@ import {
 @Injectable()
 export class SessionCreationService {
   private readonly app: AppConfig;
+  private readonly billing: BillingConfig;
 
   constructor(
     @InjectRepository(GameSession)
@@ -47,6 +51,7 @@ export class SessionCreationService {
     config: ConfigService,
   ) {
     this.app = config.getOrThrow<AppConfig>('app');
+    this.billing = config.getOrThrow<BillingConfig>('billing');
   }
 
   async createOrResume(
@@ -111,6 +116,7 @@ export class SessionCreationService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!player) throw new NotFoundException('Player not found');
+      await this.enforceFreeAllowance(player, manager);
       await this.enforceRoundBudget(userId, manager);
 
       // The mystery mix is a reserved slug, not a row: it deals from the whole
@@ -155,6 +161,31 @@ export class SessionCreationService {
     });
 
     return this.toSessionDto(created, false);
+  }
+
+  /**
+   * The freemium line. Counted under the player's row lock, which every quick
+   * deal takes first, so two taps racing for the last free round get one.
+   *
+   * 402 with its own slug, not the 429 below: this is not "slow down", it is
+   * "this needs premium", and the app answers it with the paywall.
+   */
+  private async enforceFreeAllowance(
+    player: User,
+    manager: EntityManager,
+  ): Promise<void> {
+    const limit = this.billing.freeQuickRoundsPerDay;
+    if (limit <= 0 || isPremium(player)) return;
+
+    if ((await quickRoundsToday(manager, player.id)) >= limit) {
+      throw new HttpException(
+        {
+          message: 'Today’s free rounds are used up',
+          error: 'free-rounds-exhausted',
+        },
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
   }
 
   private async enforceRoundBudget(

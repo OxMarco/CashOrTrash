@@ -287,6 +287,34 @@ export const currencyConfig = registerAs('currency', () => ({
   fallbackRates: { EUR: 0.92, GBP: 0.79 },
 }));
 
+export const billingConfig = registerAs('billing', () => ({
+  /**
+   * RevenueCat's secret (v1) API key, `sk_…`. The server never trusts what the
+   * app says it bought: every entitlement it stores is read back from
+   * RevenueCat with this key. Empty disables syncing, which production refuses.
+   */
+  revenueCatSecretKey: process.env.REVENUECAT_SECRET_API_KEY || '',
+  /**
+   * The value RevenueCat sends in the webhook's `Authorization` header, set on
+   * the integration in its dashboard. The webhook is public, so this shared
+   * secret is the only thing between it and anyone who can reach the API.
+   */
+  revenueCatWebhookAuth: process.env.REVENUECAT_WEBHOOK_AUTH || '',
+  revenueCatApiUrl: (
+    process.env.REVENUECAT_API_URL ?? 'https://api.revenuecat.com/v1'
+  ).replace(/\/+$/, ''),
+  revenueCatTimeoutMs: int(process.env.REVENUECAT_TIMEOUT_MS, 10_000),
+  /** The entitlement identifier the paywall's products unlock. */
+  entitlementId: process.env.REVENUECAT_ENTITLEMENT_ID ?? 'premium',
+  /**
+   * Quick rounds a free player may start per UTC day — the freemium line.
+   * Daily and head-to-head are outside it: the daily is one a day anyway, and
+   * a challenge is an invitation someone else sent. 0 removes the limit for
+   * everyone.
+   */
+  freeQuickRoundsPerDay: int(process.env.FREE_QUICK_ROUNDS_PER_DAY, 5),
+}));
+
 export const configurations = [
   appConfig,
   databaseConfig,
@@ -300,6 +328,7 @@ export const configurations = [
   legalConfig,
   linksConfig,
   currencyConfig,
+  billingConfig,
 ];
 
 export type AppConfig = ReturnType<typeof appConfig>;
@@ -314,3 +343,4 @@ export type MediaConfig = ReturnType<typeof mediaConfig>;
 export type LegalConfig = ReturnType<typeof legalConfig>;
 export type LinksConfig = ReturnType<typeof linksConfig>;
 export type CurrencyConfig = ReturnType<typeof currencyConfig>;
+export type BillingConfig = ReturnType<typeof billingConfig>;

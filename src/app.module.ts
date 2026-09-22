@@ -26,6 +26,7 @@ import { databasePoolOptions } from './database/pool-options';
 import { SchemaExtras } from './database/schema-extras';
 import { HealthModule } from './health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { BillingModule } from './modules/billing/billing.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { CurrencyModule } from './modules/currency/currency.module';
 import { DailyModule } from './modules/daily/daily.module';
@@ -156,6 +157,7 @@ import { buildBullRedisOptions, RedisModule } from './redis/redis.module';
     HomeModule,
     LandingModule,
     AdminModule,
+    BillingModule,
     JobsModule,
     ManifestModule,
     HealthModule,

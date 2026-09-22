@@ -81,6 +81,23 @@ export class User {
   @Column({ type: 'varchar', length: 45, nullable: true })
   registrationIp: string | null;
 
+  /**
+   * The id RevenueCat knows this player by — random, because RevenueCat's
+   * public SDK key can read any customer whose id it can guess, and `id` is a
+   * sequence. Sent to the app in `/me` and to no one else.
+   */
+  @Index('uq_user_billing_id', { unique: true })
+  @Column({ type: 'uuid', default: () => 'uuid_generate_v4()' })
+  billingId: string;
+
+  /**
+   * When the `premium` entitlement runs out, as last read from RevenueCat.
+   * Null is free, and a past value is lapsed — see `isPremium`. Written only
+   * by `BillingService`, never from anything the client sends.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  premiumExpiresAt: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 }

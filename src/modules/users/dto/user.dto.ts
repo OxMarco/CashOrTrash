@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+import { BillingStateDto } from '../../billing/dto/billing.dto';
 import {
   Currency,
   SUPPORTED_CURRENCIES,
@@ -156,4 +157,12 @@ export class MeDto {
   @Expose()
   @Type(() => LastDailyMissDto)
   lastDailyMiss: LastDailyMissDto | null;
+
+  @ApiProperty({
+    type: () => BillingStateDto,
+    description: 'Premium, and what is left of the free allowance today.',
+  })
+  @Expose()
+  @Type(() => BillingStateDto)
+  billing: BillingStateDto;
 }

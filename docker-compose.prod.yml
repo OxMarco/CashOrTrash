@@ -143,6 +143,12 @@ services:
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?run npm run admin:hash and set it in .env}
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?set an independent ADMIN_JWT_SECRET in .env}
       ADMIN_SESSION_TTL: ${ADMIN_SESSION_TTL:-2h}
+
+      # Premium is read back from RevenueCat, never taken from the app — see
+      # env.validation.ts. Both are required in production.
+      REVENUECAT_SECRET_API_KEY: ${REVENUECAT_SECRET_API_KEY:?set REVENUECAT_SECRET_API_KEY in .env}
+      REVENUECAT_WEBHOOK_AUTH: ${REVENUECAT_WEBHOOK_AUTH:?set REVENUECAT_WEBHOOK_AUTH in .env}
+      FREE_QUICK_ROUNDS_PER_DAY: ${FREE_QUICK_ROUNDS_PER_DAY:-5}
     volumes:
       # Item photography. Read-write rather than read-only: the app installs the
       # placeholder derivative on boot and washes the photographs the import

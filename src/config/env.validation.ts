@@ -136,6 +136,30 @@ export const envValidationSchema = Joi.object({
   MATCH_INVITE_TTL_DAYS: Joi.number().integer().min(0).max(365).default(7),
   QUICK_SESSIONS_PER_HOUR: Joi.number().integer().min(0).default(30),
   ACCOUNTS_PER_IP_PER_DAY: Joi.number().integer().min(0).default(50),
+  // The freemium line — see `billingConfig`. 0 lifts it for everyone.
+  FREE_QUICK_ROUNDS_PER_DAY: Joi.number().integer().min(0).default(5),
+  // Required in production: without the key nothing a player bought could be
+  // confirmed, and without the webhook secret a renewal or refund would never
+  // reach the server — a paying player would be held to the free limit.
+  REVENUECAT_SECRET_API_KEY: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().pattern(/^sk_/).required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  REVENUECAT_WEBHOOK_AUTH: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().min(32).required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  REVENUECAT_API_URL: Joi.string()
+    .uri()
+    .default('https://api.revenuecat.com/v1'),
+  REVENUECAT_TIMEOUT_MS: Joi.number()
+    .integer()
+    .min(1_000)
+    .max(60_000)
+    .default(10_000),
+  REVENUECAT_ENTITLEMENT_ID: Joi.string().default('premium'),
   // Capped at a year: `registrationIp` is retained network metadata, and a
   // retention window longer than that is not a window.
   REGISTRATION_IP_RETENTION_DAYS: Joi.number()

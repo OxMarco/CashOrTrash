@@ -25,6 +25,10 @@ export default async function globalSetup(): Promise<void> {
   );
   process.env.ADMIN_JWT_SECRET =
     'test-admin-jwt-secret-that-is-longer-than-thirty-two-characters';
+  // Off for every suite but `billing`, which turns it back on for itself: the
+  // rest play more quick rounds per player than any free allowance, and are
+  // proving other things.
+  process.env.FREE_QUICK_ROUNDS_PER_DAY = '0';
 
   // Built here rather than imported from `src/database/data-source`: that
   // module snapshots the environment at import time, and we have only just
