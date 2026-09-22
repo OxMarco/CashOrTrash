@@ -141,15 +141,17 @@ export class LandingController {
       reply,
       'Privacy policy',
       `
-        <p>Last updated: 20 August 2026</p>
+        <p>Last updated: 22 September 2026</p>
         <p>CashOrTrash creates an anonymous player account for each installation. We process a random device identifier, your chosen handle and avatar seed, scores, streaks, game sessions, match and friend relationships, and notification tokens only when you opt in to notifications.</p>
         <p>At registration we retain the originating IP address for up to ${app.registrationIpRetentionDays} days to prevent account farming and abuse. Server access and security logs may also contain IP addresses for a limited operational retention period.</p>
         <h2>Analytics and crash reports</h2>
         <p>Analytics and crash reporting are off by default. If you choose <strong>Share</strong>, the app sends anonymous product events to PostHog and crash diagnostics to Sentry. Session replay, advertising tracking, GeoIP enrichment, and user identification are disabled. You can withdraw this choice at any time in Profile.</p>
+        <h2>Purchases</h2>
+        <p>Premium is sold through the App Store or Google Play, which handle payment; we never see your card or billing details. We use RevenueCat to confirm purchases: it receives a random purchase identifier for your account (not your handle or device identifier) and the store's record of what was bought, renewed, cancelled, or refunded. We store only whether premium is active and until when.</p>
         <h2>Why we use the data</h2>
         <p>We use it to run the game, maintain leaderboards and matches, prevent abuse, deliver requested notifications, diagnose failures, and improve the product when you have consented to analytics.</p>
         <h2>Retention and deletion</h2>
-        <p>Gameplay remains while your account exists. Deleting the account is self-service: open Profile, choose <strong>Delete account</strong>, and confirm. Deletion removes the handle, account credential, scores, games, friendships, matches, and notification tokens. Short-lived cache and backup copies expire under the service retention schedule and are not restored into the live service.</p>
+        <p>Gameplay remains while your account exists. Deleting the account is self-service: open Profile, choose <strong>Delete account</strong>, and confirm. Deletion removes the handle, account credential, scores, games, friendships, matches, and notification tokens, and asks RevenueCat to erase its purchase record for the account. The App Store or Google Play keeps its own record of the transaction under its own policy. Short-lived cache and backup copies expire under the service retention schedule and are not restored into the live service.</p>
         <h2>Your choices</h2>
         <p>You may disable analytics at any time in Profile, and delete the account yourself from the same screen. For access, correction, or privacy questions, email <a href="mailto:${email}">${email}</a>.</p>
       `,
@@ -175,10 +177,12 @@ export class LandingController {
       reply,
       'Terms of service',
       `
-        <p>Last updated: 23 August 2026</p>
+        <p>Last updated: 22 September 2026</p>
         <p>These terms govern your use of the CashOrTrash game and the service behind it. Using the app means you accept them.</p>
         <h2>The service</h2>
-        <p>CashOrTrash is a guessing game: each day it shows the same five items to everyone and scores the price range you bet. It is entertainment. Prices, item descriptions, and other item copy are drawn from public listings and generated automatically, may be inaccurate or out of date, and are not an offer, a valuation, or advice of any kind. Nothing here can be bought or sold.</p>
+        <p>CashOrTrash is a guessing game: each day it shows the same five items to everyone and scores the price range you bet. It is entertainment. Prices, item descriptions, and other item copy are drawn from public listings and generated automatically, may be inaccurate or out of date, and are not an offer, a valuation, or advice of any kind. The items shown cannot be bought or sold through the app.</p>
+        <h2>Premium</h2>
+        <p>The daily challenge and head-to-head are free. Quick rounds are free up to a daily limit; Premium, a monthly or yearly subscription, removes that limit. It is bought through the App Store or Google Play, renews automatically until you cancel, and is charged by the store under its own terms. Cancel or change the plan in your store account settings or from Profile; access continues to the end of the period already paid for. Refunds are handled by the store. Deleting your account does not cancel a subscription — cancel it with the store first.</p>
         <h2>Your account</h2>
         <p>Installing the app creates an anonymous account tied to that installation. There is no password to recover: lose the installation and you lose access to the account, and we cannot restore or transfer one. You are responsible for what happens under your account, and your handle must not impersonate anyone or be abusive, hateful, or obscene.</p>
         <h2>Fair play</h2>
