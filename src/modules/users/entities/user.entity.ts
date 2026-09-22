@@ -26,9 +26,21 @@ export class User {
   @Column({ type: 'citext', nullable: true })
   username: string | null;
 
+  /**
+   * SHA-256 of the client's device id, as lowercase hex — never the id itself.
+   *
+   * The device id is the account's permanent bearer credential, so it is kept
+   * the way a password would be: only in a form that cannot be presented back
+   * to the API. See `hashDeviceId`, the one place the digest is computed.
+   *
+   * Renamed from `deviceId` when the stored values were hashed, so that code
+   * (or an old replica mid-deploy) that still expects the plaintext column
+   * fails loudly rather than quietly registering a duplicate account under an
+   * unhashed id that nothing would ever match again.
+   */
   @Index('uq_user_device_id', { unique: true })
-  @Column({ type: 'varchar', length: 128 })
-  deviceId: string;
+  @Column({ type: 'varchar', length: 64 })
+  deviceIdHash: string;
 
   /** Drives the client-side generated avatar; no image upload in v1. */
   @Column({ type: 'varchar', length: 32 })

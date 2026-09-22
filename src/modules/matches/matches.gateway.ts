@@ -35,6 +35,7 @@ export const MATCH_EVENTS = {
 const room = (matchId: string): string => `match:${matchId}`;
 const MAX_MATCH_ROOMS_PER_SOCKET = 8;
 const MAX_SOCKETS_PER_USER = 5;
+const MAX_MATCH_MESSAGES_PER_MINUTE = 60;
 const CONNECTION_KEY_TTL_SLACK_SECONDS = 60;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
@@ -77,6 +78,7 @@ export class MatchesGateway
    * Removed as soon as it settles, so a socket past that point costs nothing.
    */
   private readonly authenticating = new Map<string, Promise<void>>();
+  private readonly joining = new Map<string, Promise<void>>();
 
   @WebSocketServer()
   server: Server;
@@ -240,7 +242,33 @@ export class MatchesGateway
   ): Promise<{ joined: string }> {
     const matchId = matchIdFrom(body);
     const userId = await this.identify(client);
+    await this.consumeMessage(userId);
+    const matchRoom = room(matchId);
+    if (client.rooms.has(matchRoom)) return { joined: matchId };
 
+    // Two joins sent before the first database read finishes share its work
+    // and produce one presence event for the opponent.
+    const joiningKey = `${client.id}:${matchId}`;
+    let pending = this.joining.get(joiningKey);
+    if (!pending) {
+      pending = this.joinRoom(client, matchId, userId);
+      this.joining.set(joiningKey, pending);
+    }
+    try {
+      await pending;
+    } finally {
+      if (this.joining.get(joiningKey) === pending) {
+        this.joining.delete(joiningKey);
+      }
+    }
+    return { joined: matchId };
+  }
+
+  private async joinRoom(
+    client: Socket,
+    matchId: string,
+    userId: number,
+  ): Promise<void> {
     try {
       await this.matches.getForPlayer(matchId, userId);
     } catch {
@@ -264,8 +292,6 @@ export class MatchesGateway
       matchId,
       userId,
     });
-
-    return { joined: matchId };
   }
 
   @SubscribeMessage('leaveMatch')
@@ -274,8 +300,21 @@ export class MatchesGateway
     @MessageBody() body: unknown,
   ): Promise<{ left: string }> {
     const matchId = matchIdFrom(body);
+    const userId = await this.identify(client);
+    await this.consumeMessage(userId);
     await client.leave(room(matchId));
     return { left: matchId };
+  }
+
+  private async consumeMessage(userId: number): Promise<void> {
+    const allowed = await this.redis.consumeSocketMessage(
+      `ws:messages:user:${userId}`,
+      MAX_MATCH_MESSAGES_PER_MINUTE,
+      60,
+    );
+    if (Number(allowed) !== 1) {
+      throw new WsException('Too many match messages');
+    }
   }
 
   /**

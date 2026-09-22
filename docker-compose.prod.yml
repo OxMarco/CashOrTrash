@@ -31,6 +31,16 @@ services:
     # enableShutdownHooks, so the app drains either way — this is for anything
     # it spawns.
     init: true
+    # Compose's default is 10s, after which the app is SIGKILLed mid-drain. On
+    # SIGTERM (enableShutdownHooks in main.ts) Nest closes the HTTP server, the
+    # socket.io adapter and the BullMQ worker — and the worker waits for the job
+    # it is running to finish. 60s covers an ordinary item-copy model call and
+    # every other job comfortably. It does not cover a worst-case one (up to
+    # OPENAI_TIMEOUT_MS per attempt), and is not meant to: a pass killed halfway
+    # leaves its unwritten items flagged `copyPending`, BullMQ's stall detection
+    # re-runs the job, and the boot catch-up sweeps up anything left. Waiting
+    # minutes on every deploy for that case would cost more than it saves.
+    stop_grace_period: 60s
     env_file:
       - .env
     environment:
@@ -52,14 +62,18 @@ services:
       ANDROID_APP_PACKAGE: ${ANDROID_APP_PACKAGE:-fun.cashortrash.app}
       ANDROID_SHA256_CERT_FINGERPRINT: ${ANDROID_SHA256_CERT_FINGERPRINT:-}
 
-      # Owned by compose, not .env. Postgres is reachable only on the compose
-      # network (no published port, not routed by Traefik), so a strong
-      # password buys nothing and the credentials are the plain defaults.
+      # Host, name and user are owned by compose; the password comes from .env.
+      # Postgres is reachable only on the compose network (no published port,
+      # not routed by Traefik), so the password is defence in depth rather than
+      # the perimeter — but a literal in a committed file is also a literal in
+      # every clone, fork and CI log of this repository. `:?` because the
+      # postgres and db-backup services read the same variable, and one of the
+      # three quietly defaulting would lock the other two out.
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
       DATABASE_NAME: cashortrash
       DATABASE_USER: cashortrash
-      DATABASE_PASSWORD: cashortrash
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       DATABASE_SSL: 'false'
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -206,7 +220,11 @@ services:
     environment:
       POSTGRES_DB: cashortrash
       POSTGRES_USER: cashortrash
-      POSTGRES_PASSWORD: cashortrash
+      # Read only when the data volume is first initialised. Changing it in
+      # .env later does NOT change the database's password — run
+      # `ALTER USER cashortrash PASSWORD '...'` via `make psql` first, then
+      # update .env to match, then recreate app and db-backup.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -247,7 +265,7 @@ services:
       PGPORT: 5432
       PGDATABASE: cashortrash
       PGUSER: cashortrash
-      PGPASSWORD: cashortrash
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
     volumes:
       - ./scripts/db-backup.sh:/db-backup.sh:ro

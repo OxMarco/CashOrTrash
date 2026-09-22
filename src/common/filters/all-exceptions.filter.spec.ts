@@ -46,6 +46,54 @@ describe('all exceptions filter health logging', () => {
   });
 
   /**
+   * The probe is public. An indicator's message is written for an operator —
+   * a driver error naming a host and port, the reason a job failed — and is
+   * reconnaissance for anyone else. It goes to the log and nowhere else.
+   */
+  it('logs indicator details but sends only up/down per dependency', () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    const send = jest.fn();
+    const reply = {
+      status: jest.fn().mockReturnThis(),
+      header: jest.fn().mockReturnThis(),
+      send,
+    };
+    const host = {
+      switchToHttp: () => ({
+        getResponse: () => reply,
+        getRequest: () => ({ url: '/health/ready' }),
+      }),
+    } as never;
+    const details = {
+      database: { status: 'up' },
+      redis: {
+        status: 'down',
+        message: 'connect ECONNREFUSED 172.18.0.3:6379',
+      },
+    };
+
+    new AllExceptionsFilter().catch(
+      new ServiceUnavailableException({
+        status: 'error',
+        error: { redis: details.redis },
+        details,
+      }),
+      host,
+    );
+
+    const body = send.mock.calls[0][0] as { checks: unknown };
+    expect(body.checks).toEqual({
+      database: { status: 'up' },
+      redis: { status: 'down' },
+    });
+    expect(JSON.stringify(body)).not.toContain('ECONNREFUSED');
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ checks: details }),
+      'Health check failed: redis',
+    );
+  });
+
+  /**
    * The contract the app switches on. A refusal thrown with `{ error, message }`
    * has to keep the slug in `type` and the prose in `title`: the client picks
    * its own sentence from the first and never reads the second, so a reworded

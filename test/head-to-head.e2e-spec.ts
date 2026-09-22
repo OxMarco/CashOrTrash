@@ -5,6 +5,7 @@ import {
   MatchesGateway,
 } from '../src/modules/matches/matches.gateway';
 import { MatchesService } from '../src/modules/matches/matches.service';
+import { MatchesReadService } from '../src/modules/matches/matches-read.service';
 import { playRound, registerPlayer } from './support/players';
 import { createTestApp, resetGameplayState, TestApp } from './support/test-app';
 
@@ -521,6 +522,38 @@ describe('head-to-head across replicas', () => {
           (occupant) => Number(occupant.data.userId) === gatecrasher.userId,
         ),
       ).toBe(false);
+    });
+
+    it('makes repeated joins idempotent and limits messages across sockets', async () => {
+      const host = await registerPlayer(
+        replicaA.api,
+        'h2h-message-budget-host',
+      );
+      const match = await host.api.post('/v1/matches', {
+        themeSlug: 'vintage-finds',
+      });
+      const first = await openSocket(replicaA.baseUrl, host.accessToken);
+      const second = await openSocket(replicaB.baseUrl, host.accessToken);
+      const read = replicaA.app.get(MatchesReadService);
+      const lookup = jest.spyOn(read, 'getForPlayer');
+      try {
+        expect(
+          await first.emitWithAck('joinMatch', { matchId: match.body.id }),
+        ).toEqual({ joined: match.body.id });
+        for (let i = 0; i < 29; i++) {
+          await first.emitWithAck('joinMatch', { matchId: match.body.id });
+        }
+        expect(lookup).toHaveBeenCalledTimes(1);
+
+        for (let i = 0; i < 30; i++) {
+          await second.emitWithAck('joinMatch', { matchId: match.body.id });
+        }
+        const refused = nextEvent<any>(first, 'exception');
+        first.emit('joinMatch', { matchId: match.body.id });
+        expect((await refused).message).toBe('Too many match messages');
+      } finally {
+        lookup.mockRestore();
+      }
     });
   });
 

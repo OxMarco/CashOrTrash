@@ -10,7 +10,7 @@ import { DataSource } from 'typeorm';
 import { attachRealtime, configureApp } from '../../src/app.bootstrap';
 import { AppModule } from '../../src/app.module';
 import { AppConfig } from '../../src/config/configuration';
-import { TRUST_PROXY_HOPS } from '../../src/config/proxy';
+import { trustProxy } from '../../src/config/proxy';
 import { REDIS_CLIENT } from '../../src/redis/redis.constants';
 import { Api } from './api-client';
 
@@ -42,7 +42,7 @@ export async function createTestApp(): Promise<TestApp> {
 
   const app = moduleRef.createNestApplication<NestFastifyApplication>(
     new FastifyAdapter({
-      trustProxy: TRUST_PROXY_HOPS,
+      trustProxy,
       bodyLimit: 256 * 1024,
     }),
     { logger: false },

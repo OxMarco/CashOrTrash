@@ -1,16 +1,34 @@
-import { ExpoPushMessage, ExpoPushTicket } from 'expo-server-sdk';
+import {
+  ExpoPushMessage,
+  ExpoPushReceipt,
+  ExpoPushTicket,
+} from 'expo-server-sdk';
 
 import { PushPlatform, PushToken } from './entities/push-token.entity';
-import { ExpoGateway, ExpoPushSender } from './push-sender';
+import {
+  ExpoGateway,
+  ExpoPushSender,
+  type PushDelivery,
+  type PushMessage,
+} from './push-sender';
 
 const token = (value: string): PushToken =>
   ({ token: value, platform: PushPlatform.IOS }) as PushToken;
+
+/** The same message to each token — what most of these cases need. */
+const to = (tokens: PushToken[], message: PushMessage): PushDelivery[] =>
+  tokens.map((target) => ({ token: target, message }));
 
 /** Expo's own per-request message limit, which `send` batches at. */
 const EXPO_BATCH = 100;
 
 describe('ExpoPushSender', () => {
-  let expo: { chunk: jest.Mock; send: jest.Mock };
+  let expo: {
+    chunk: jest.Mock;
+    send: jest.Mock;
+    chunkReceiptIds: jest.Mock;
+    receipts: jest.Mock;
+  };
   let sender: ExpoPushSender;
 
   beforeEach(() => {
@@ -23,6 +41,8 @@ describe('ExpoPushSender', () => {
         ),
       ),
       send: jest.fn(),
+      chunkReceiptIds: jest.fn((ids: string[]) => [ids]),
+      receipts: jest.fn(),
     };
     sender = new ExpoPushSender(expo as unknown as ExpoGateway);
   });
@@ -38,12 +58,19 @@ describe('ExpoPushSender', () => {
     ] satisfies ExpoPushTicket[]);
 
     await expect(
-      sender.send([token('valid'), token('expired')], {
-        title: 'Daily ready',
-        body: 'Five items are waiting.',
-        data: { kind: 'daily_ready' },
-      }),
-    ).resolves.toEqual({ sent: 1, invalidTokens: ['expired'], failed: 0 });
+      sender.send(
+        to([token('valid'), token('expired')], {
+          title: 'Daily ready',
+          body: 'Five items are waiting.',
+          data: { kind: 'daily_ready' },
+        }),
+      ),
+    ).resolves.toEqual({
+      sent: 1,
+      invalidTokens: ['expired'],
+      failed: 0,
+      tickets: [{ id: 'ticket-1', token: 'valid' }],
+    });
 
     expect(expo.send).toHaveBeenCalledWith([
       {
@@ -77,8 +104,8 @@ describe('ExpoPushSender', () => {
       token(`token-${index}`),
     );
     await expect(
-      sender.send(tokens, { title: 'Title', body: 'Body', data: {} }),
-    ).resolves.toEqual({ sent: 101, invalidTokens: [], failed: 0 });
+      sender.send(to(tokens, { title: 'Title', body: 'Body', data: {} })),
+    ).resolves.toMatchObject({ sent: 101, invalidTokens: [], failed: 0 });
     expect(expo.send).toHaveBeenCalledTimes(2);
   });
 
@@ -103,16 +130,22 @@ describe('ExpoPushSender', () => {
     );
 
     await expect(
-      sender.send(tokens, { title: 'Title', body: 'Body', data: {} }),
-    ).resolves.toEqual({ sent: EXPO_BATCH, invalidTokens: [], failed: 1 });
+      sender.send(to(tokens, { title: 'Title', body: 'Body', data: {} })),
+    ).resolves.toMatchObject({
+      sent: EXPO_BATCH,
+      invalidTokens: [],
+      failed: 1,
+    });
   });
 
   it('counts a malformed ticket list rather than unwinding the call', async () => {
     expo.send.mockResolvedValueOnce([]);
 
     await expect(
-      sender.send([token('one')], { title: 'Title', body: 'Body', data: {} }),
-    ).resolves.toEqual({ sent: 0, invalidTokens: [], failed: 1 });
+      sender.send(
+        to([token('one')], { title: 'Title', body: 'Body', data: {} }),
+      ),
+    ).resolves.toEqual({ sent: 0, invalidTokens: [], failed: 1, tickets: [] });
   });
 
   /**
@@ -137,12 +170,19 @@ describe('ExpoPushSender', () => {
 
     // Reversed, so the dead ticket is first while `expired` was passed second.
     await expect(
-      sender.send([token('valid'), token('expired')], {
-        title: 'Title',
-        body: 'Body',
-        data: {},
-      }),
-    ).resolves.toEqual({ sent: 1, invalidTokens: ['expired'], failed: 0 });
+      sender.send(
+        to([token('valid'), token('expired')], {
+          title: 'Title',
+          body: 'Body',
+          data: {},
+        }),
+      ),
+    ).resolves.toEqual({
+      sent: 1,
+      invalidTokens: ['expired'],
+      failed: 0,
+      tickets: [{ id: 'ticket-1', token: 'valid' }],
+    });
   });
 
   it('attributes no ticket in a chunk it cannot trace back to a token', async () => {
@@ -151,8 +191,10 @@ describe('ExpoPushSender', () => {
     ]);
 
     await expect(
-      sender.send([token('one')], { title: 'Title', body: 'Body', data: {} }),
-    ).resolves.toEqual({ sent: 0, invalidTokens: [], failed: 1 });
+      sender.send(
+        to([token('one')], { title: 'Title', body: 'Body', data: {} }),
+      ),
+    ).resolves.toEqual({ sent: 0, invalidTokens: [], failed: 1, tickets: [] });
     expect(expo.send).not.toHaveBeenCalled();
   });
 
@@ -171,7 +213,66 @@ describe('ExpoPushSender', () => {
     ] satisfies ExpoPushTicket[]);
 
     await expect(
-      sender.send([token('one')], { title: 'Title', body: 'Body', data: {} }),
-    ).resolves.toEqual({ sent: 0, invalidTokens: [], failed: 1 });
+      sender.send(
+        to([token('one')], { title: 'Title', body: 'Body', data: {} }),
+      ),
+    ).resolves.toEqual({ sent: 0, invalidTokens: [], failed: 1, tickets: [] });
+  });
+
+  it('sends each device its own message in one batch', async () => {
+    expo.send.mockImplementation((messages: ExpoPushMessage[]) =>
+      Promise.resolve(
+        messages.map((_, index) => ({ status: 'ok', id: `t-${index}` })),
+      ),
+    );
+
+    await sender.send([
+      { token: token('en'), message: { title: 'Ready', body: 'Play' } },
+      { token: token('it'), message: { title: 'Pronto', body: 'Gioca' } },
+    ]);
+
+    expect(expo.send).toHaveBeenCalledTimes(1);
+    expect(expo.send).toHaveBeenCalledWith([
+      expect.objectContaining({ to: 'en', title: 'Ready' }),
+      expect.objectContaining({ to: 'it', title: 'Pronto' }),
+    ]);
+  });
+
+  describe('receipts', () => {
+    it('settles every id Expo answered and names the dead devices', async () => {
+      expo.receipts.mockResolvedValueOnce({
+        a: { status: 'ok' },
+        b: {
+          status: 'error',
+          message: 'gone',
+          details: { error: 'DeviceNotRegistered' },
+        },
+        c: {
+          status: 'error',
+          message: 'apns down',
+          details: { error: 'ProviderError' },
+        },
+      } satisfies Record<string, ExpoPushReceipt>);
+
+      await expect(sender.receipts(['a', 'b', 'c', 'd'])).resolves.toEqual({
+        // `d` has no receipt yet, so it is not settled and will be asked again.
+        settled: ['a', 'b', 'c'],
+        deviceNotRegistered: ['b'],
+        failed: 1,
+      });
+    });
+
+    it('leaves a chunk it could not fetch unsettled, to ask again', async () => {
+      expo.chunkReceiptIds.mockReturnValueOnce([['a'], ['b']]);
+      expo.receipts
+        .mockRejectedValueOnce(new Error('503'))
+        .mockResolvedValueOnce({ b: { status: 'ok' } });
+
+      await expect(sender.receipts(['a', 'b'])).resolves.toEqual({
+        settled: ['b'],
+        deviceNotRegistered: [],
+        failed: 0,
+      });
+    });
   });
 });

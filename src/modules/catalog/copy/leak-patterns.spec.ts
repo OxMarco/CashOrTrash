@@ -68,6 +68,81 @@ describe('finding a price leak', () => {
       }
     });
 
+    /**
+     * The shapes the first version of this filter missed. Every one is how a
+     * price is ordinarily written somewhere these languages are spoken — the
+     * symbol after the number, an ISO code, a magnitude word — and every one
+     * reached a player's screen as a pass.
+     */
+    it('catches a price written after the number, as a code, or as a magnitude', () => {
+      const amounts: Record<typeof locale, string[]> = {
+        es: [
+          '12.000€ nuevo',
+          'unos 12 000 €',
+          'EUR 1.200 en su día',
+          'hoy ronda los 45k',
+          'alrededor de 1,2 millones',
+          'unos 12 mil',
+          '1,2 M€',
+        ],
+        pt: [
+          '12.000€ na altura',
+          'BRL 4.500',
+          '4.500 BRL',
+          'cerca de 45k',
+          'cerca de 1,2 milhões',
+          'uns 12 mil',
+          'R$ 1,2 mi',
+        ],
+        it: [
+          'circa 12 500 €',
+          '1,2 milioni',
+          'CHF 9.000',
+          'sui 45k',
+          'circa 12 mila',
+          '3 mln',
+        ],
+      };
+      for (const text of amounts[locale]) {
+        expect(findPriceLeak(text, locale)).not.toBeNull();
+      }
+    });
+
+    /**
+     * The magnitude patterns sit right next to a watch's karats, a car's
+     * odometer and a television's resolution. Each of these is a spec line the
+     * filter must leave alone, or the item loses its copy for stating a fact.
+     */
+    it('leaves karats, mileage, resolution and production counts alone', () => {
+      const clean: Record<typeof locale, string[]> = {
+        es: [
+          'Caja de oro amarillo de 18k, 38 mm',
+          'Oro 18k · esfera blanca',
+          'Motor V8 · 45k km',
+          'Solo 12 mil km desde nuevo',
+          'Pantalla OLED 4K · 120 Hz',
+          'Más de 1,2 millones de unidades fabricadas',
+        ],
+        pt: [
+          'Caixa em ouro amarelo 18k, 38 mm',
+          'Motor V8 · 45k km',
+          '12 mil km desde novo',
+          'Tela OLED 4K · 120 Hz',
+          'Mais de 1,2 milhões de unidades produzidas',
+        ],
+        it: [
+          'Cassa in oro giallo 18k, 38 mm',
+          'Motore V8 · 45k km',
+          'Solo 12 mila km',
+          'Schermo OLED 4K · 120 Hz',
+          'Oltre 1,2 milioni di esemplari prodotti',
+        ],
+      };
+      for (const text of clean[locale]) {
+        expect(findPriceLeak(text, locale)).toBeNull();
+      }
+    });
+
     it('leaves a plain specification alone, including scarcity as a fact', () => {
       // The line between a specification and an appraisal is the one thing a
       // filter this blunt can get wrong in the expensive direction: every false
@@ -105,6 +180,42 @@ describe('finding a price leak', () => {
       for (const text of agreed[locale]) {
         expect(findPriceLeak(text, locale)).not.toBeNull();
       }
+    });
+  });
+
+  describe('amounts in English beyond the symbol-first form', () => {
+    it.each([
+      'CHF 9,000',
+      '9,000 CHF',
+      'listed at 45k',
+      'around 12.5K',
+      'about 4k',
+      'about 1.2 million',
+      'roughly 3bn',
+      '45 grand',
+      '12 500 €',
+      '45k€',
+      // An excused "4K" early in the line must not hide the price after it.
+      '4K display · listed at 45k',
+    ])('catches %j', (text) => {
+      expect(findPriceLeak(text)).not.toBeNull();
+    });
+
+    it.each([
+      'Manual wind, 18k yellow gold case, 31mm',
+      '18K white gold bracelet',
+      '65-inch OLED · 4K · 120Hz',
+      'Native 8K sensor',
+      '4k display with HDR',
+      '45k miles from new · one owner',
+      'Redline at 8k rpm',
+      'Over 2 million built · 1965',
+      'One of 20k units made',
+      'Steinway Model B · 1 grand piano bench included',
+      'Built 1978 · restored 2019',
+      '2m long, 40cm wide',
+    ])('passes %j', (text) => {
+      expect(findPriceLeak(text)).toBeNull();
     });
   });
 

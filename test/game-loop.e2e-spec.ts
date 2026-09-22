@@ -10,6 +10,7 @@ import {
 import { Api } from './support/api-client';
 import { playRound, registerPlayer } from './support/players';
 import { createTestApp, resetGameplayState, TestApp } from './support/test-app';
+import { waitFor } from './support/wait';
 
 /**
  * Phase 4 exit criteria: a replayed bet is idempotent, and a daily session
@@ -178,6 +179,93 @@ describe('the game loop', () => {
   });
 
   describe('placing a bet', () => {
+    it('takes the user lock before the session lock', async () => {
+      const player = await registerPlayer(api, 'loop-lock-order-player');
+      const session = await player.api.post('/v1/sessions', {
+        mode: 'quick',
+        themeSlug: 'everyday-stuff',
+      });
+      const sessionId = session.body.id as string;
+      const current = await player.api.get(`/v1/sessions/${sessionId}/current`);
+      const holder = ctx.dataSource.createQueryRunner();
+      await holder.connect();
+      await holder.startTransaction();
+      try {
+        await holder.query('SELECT id FROM "user" WHERE id = $1 FOR UPDATE', [
+          player.userId,
+        ]);
+        const bet = player.api.post(`/v1/sessions/${sessionId}/rounds/0/bet`, {
+          loCents: current.body.suggestedLoCents,
+          hiCents: current.body.suggestedHiCents,
+        });
+
+        // Wait until the bet reaches PostgreSQL and blocks on the held user.
+        await waitFor(
+          async () => {
+            const [row] = await ctx.dataSource.query<
+              Array<{ waiting: number }>
+            >(
+              `SELECT COUNT(*)::int AS waiting FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'
+               AND query LIKE '%"user"%'`,
+            );
+            return row.waiting > 0;
+          },
+          { label: 'bet waiting for player row' },
+        );
+
+        // A new quick session locks the player first, then sessions. If this
+        // NOWAIT succeeds, the blocked bet has not grabbed the session first.
+        const probe = ctx.dataSource.createQueryRunner();
+        await probe.connect();
+        try {
+          await probe.startTransaction();
+          await expect(
+            probe.query(
+              'SELECT id FROM game_session WHERE id = $1 FOR UPDATE NOWAIT',
+              [sessionId],
+            ),
+          ).resolves.toHaveLength(1);
+          await probe.rollbackTransaction();
+        } finally {
+          await probe.release();
+        }
+        await holder.commitTransaction();
+        expect((await bet).status).toBe(200);
+      } finally {
+        if (holder.isTransactionActive) await holder.rollbackTransaction();
+        await holder.release();
+      }
+    });
+
+    it('lets a bet and a fresh quick game race without deadlocking', async () => {
+      const player = await registerPlayer(api, 'loop-lock-race-player');
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const session = await player.api.post('/v1/sessions', {
+          mode: 'quick',
+          themeSlug: 'everyday-stuff',
+        });
+        const sessionId = session.body.id as string;
+        const current = await player.api.get(
+          `/v1/sessions/${sessionId}/current`,
+        );
+        const [bet, restart] = await Promise.all([
+          player.api.post(`/v1/sessions/${sessionId}/rounds/0/bet`, {
+            loCents: current.body.suggestedLoCents,
+            hiCents: current.body.suggestedHiCents,
+          }),
+          player.api.post('/v1/sessions', {
+            mode: 'quick',
+            themeSlug: 'everyday-stuff',
+          }),
+        ]);
+        // The restart may abandon the session first, which refuses the bet
+        // as finished; what must never happen is a deadlock's 500.
+        expect([200, 409]).toContain(bet.status);
+        expect(restart.status).toBe(201);
+      }
+    });
+
     it('scores the round, advances the session and closes it on the last one', async () => {
       const player = await registerPlayer(api, 'loop-device-0005', 'scorer');
       const session = await player.api.post('/v1/sessions', { mode: 'daily' });

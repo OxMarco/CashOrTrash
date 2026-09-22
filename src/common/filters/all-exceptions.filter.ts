@@ -9,6 +9,13 @@ import {
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { QueryFailedError } from 'typeorm';
 
+import {
+  PG_CHECK_VIOLATION,
+  PG_FOREIGN_KEY_VIOLATION,
+  PG_UNIQUE_VIOLATION,
+} from 'src/common/database/pg-error-codes';
+import { redactHealthDetails } from 'src/health/redact-health';
+
 /** RFC7807-ish body. `type` stays a stable machine-readable slug. */
 export interface ProblemDetails {
   type: string;
@@ -17,8 +24,11 @@ export interface ProblemDetails {
   detail?: string;
   instance?: string;
   errors?: unknown;
-  /** Per-dependency health results; only set on a failed readiness probe. */
-  checks?: Record<string, unknown>;
+  /**
+   * Per-dependency up/down; only set on a failed readiness probe. Deliberately
+   * no more than that — see `redactHealthDetails`.
+   */
+  checks?: Record<string, { status: 'up' | 'down' }>;
 }
 
 const SERVER_ERROR: number = HttpStatus.INTERNAL_SERVER_ERROR;
@@ -31,7 +41,7 @@ const SERVER_ERROR: number = HttpStatus.INTERNAL_SERVER_ERROR;
  * generic object branch below would flatten it to the bare title "Service
  * Unavailable Exception", leaving a 503 that says something is wrong but not
  * which dependency. Recognised here so the envelope stays problem+json while
- * the map survives.
+ * the map survives — reduced to up/down per dependency before it leaves.
  */
 interface HealthCheckPayload {
   status: string;
@@ -46,10 +56,6 @@ const asHealthCheck = (
     ? (body as unknown as HealthCheckPayload)
     : undefined;
 
-const PG_UNIQUE_VIOLATION = '23505';
-const PG_FK_VIOLATION = '23503';
-const PG_CHECK_VIOLATION = '23514';
-
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
@@ -63,10 +69,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     // An unhealthy probe is expected operational state, not an unhandled
     // application exception. Keep it visible without emitting a misleading
-    // stack trace every time an orchestrator polls readiness.
+    // stack trace every time an orchestrator polls readiness. The full
+    // indicator details go to the log — the only place they are kept, since
+    // the response carries up/down alone.
     if (problem.checks) {
       this.logger.warn(
-        { path: problem.instance, checks: problem.checks },
+        { path: problem.instance, checks: healthDetailsOf(exception) },
         problem.title,
       );
     } else if (problem.status >= SERVER_ERROR) {
@@ -110,7 +118,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
             ? `Health check failed: ${down.join(', ')}`
             : 'Health check failed',
           status,
-          checks: health.details,
+          checks: redactHealthDetails(health.details),
           instance: path,
         };
       }
@@ -143,7 +151,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
           instance: path,
         };
       }
-      if (code === PG_FK_VIOLATION || code === PG_CHECK_VIOLATION) {
+      if (code === PG_FOREIGN_KEY_VIOLATION || code === PG_CHECK_VIOLATION) {
         return {
           type: 'constraint-violation',
           title: 'Request violates a data constraint',
@@ -161,6 +169,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
     };
   }
 }
+
+/** The unredacted Terminus details on a failed probe, for the log only. */
+const healthDetailsOf = (exception: unknown): unknown => {
+  if (!(exception instanceof HttpException)) return undefined;
+  const response = exception.getResponse();
+  return isRecord(response) ? asHealthCheck(response)?.details : undefined;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);

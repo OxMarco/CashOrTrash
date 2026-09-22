@@ -8,9 +8,11 @@ import { Theme } from '../entities/theme.entity';
 import { CatalogService } from '../catalog.service';
 import { DIGEST_PATTERN, MediaStore } from '../../media/media-store';
 import { splitCondition } from './filename';
-import { COPY_LOCALES } from './leak-patterns';
+import { COPY_LOCALES, findPriceLeak } from './leak-patterns';
 import {
+  CopywriterUnavailableError,
   ItemCopywriter,
+  MAX_TITLE_LENGTH,
   type CopyRequest,
   type ItemCopy,
 } from './item-copywriter.service';
@@ -100,20 +102,37 @@ export class ItemCopyService {
     }
 
     const translatable: TranslatableItem[] = [];
+    let outage: CopywriterUnavailableError | null = null;
     for (const [themeId, group] of byTheme) {
       const category = themes.get(themeId) ?? 'Items';
       const taken = await this.titlesIn(themeId);
-      const written = await this.copywriter.write(
-        await Promise.all(
-          group.map((item) => this.request(item, category, taken)),
-        ),
+      const requests = await Promise.all(
+        group.map((item) => this.request(item, category, taken)),
       );
 
+      let written: Map<string, ItemCopy>;
+      try {
+        written = await this.copywriter.write(requests);
+      } catch (error) {
+        if (!(error instanceof CopywriterUnavailableError)) throw error;
+        // Keep what was already paid for; everything else stays flagged.
+        outage = error;
+        written = error.partial;
+      }
+
       for (const item of group) {
-        const copy = written.get(String(item.id)) ?? null;
+        const ref = String(item.id);
+        // Never asked, or asked while the provider was down: the flag stays
+        // set so the retry — or the next boot's catch-up — writes it. Only an
+        // item the model actually answered for reaches `apply`.
+        if (outage && !outage.settled.has(ref)) continue;
+        const copy = written.get(ref) ?? null;
         const applied = await this.apply(item, copy, taken, report);
         if (applied) translatable.push({ ...applied, category });
       }
+
+      // The next category would only wait out the same timeout to fail.
+      if (outage) break;
     }
 
     await this.translate(translatable, report);
@@ -123,6 +142,18 @@ export class ItemCopyService {
       await this.catalog.invalidateThemes();
     }
     this.log(report);
+
+    // Thrown after the bookkeeping, not instead of it: what was written is
+    // committed and the cache invalidated, and only then does the job fail so
+    // BullMQ's `attempts` retry it with backoff. Once those are exhausted the
+    // items are still flagged, and the boot catch-up in `JobsModule` — or the
+    // next upload's job — sweeps them up.
+    if (outage) {
+      this.logger.error(
+        `Item copy interrupted: ${outage.message} — ${report.remaining} item(s) stay queued for a retry`,
+      );
+      throw outage;
+    }
     return report;
   }
 
@@ -216,6 +247,10 @@ export class ItemCopyService {
   /**
    * Commits whatever the model returned, and clears the flag either way.
    *
+   * "Either way" means the model answered — accepted copy, or a refusal, a
+   * truncation or a leak. An item it was never able to answer for, because the
+   * provider was down, never reaches here; see `run`.
+   *
    * A refusal is not a reason to keep asking. An item that stayed flagged would
    * be re-sent on every run for as long as the model kept declining it, paying
    * repeatedly for the same no. Re-running it is a deliberate act in the portal
@@ -239,7 +274,7 @@ export class ItemCopyService {
       return null;
     }
 
-    const title = await this.freeTitle(copy.title, item, taken);
+    const title = await this.freeTitle(copy, item, taken);
     await this.items.update(
       { id: item.id },
       { title, conditionLine: copy.conditionLine, copyPending: false },
@@ -307,12 +342,20 @@ export class ItemCopyService {
    * already been paid for. Falls back to the condition line — a year or a grade
    * is what actually distinguishes two objects the model named the same — and
    * only then to a numeric suffix.
+   *
+   * The condition line is the one just written, not the row's stored one. A
+   * portal upload is created with an empty line, so the stored value produced
+   * "Rolex Submariner · " — and on a rewrite it is the *previous* description,
+   * which may no longer be true of the object. Skipped when empty, and the
+   * combination is run back through the filter: each half passed on its own,
+   * but the title is now a string nobody has checked as a whole.
    */
   private async freeTitle(
-    wanted: string,
+    copy: ItemCopy,
     item: Item,
     taken: Set<string>,
   ): Promise<string> {
+    const wanted = copy.title;
     const held = async (candidate: string) => {
       if (candidate !== item.title && taken.has(candidate)) return true;
       const clash = await this.items.findOne({
@@ -324,12 +367,23 @@ export class ItemCopyService {
 
     if (!(await held(wanted))) return wanted;
 
-    const qualified = `${wanted} · ${item.conditionLine}`.trim();
-    if (qualified.length <= 120 && !(await held(qualified))) return qualified;
+    const line = copy.conditionLine.trim();
+    if (line) {
+      const qualified = `${wanted} · ${line}`;
+      if (
+        qualified.length <= MAX_TITLE_LENGTH &&
+        !findPriceLeak(qualified) &&
+        !(await held(qualified))
+      ) {
+        return qualified;
+      }
+    }
 
     for (let n = 2; n < 100; n += 1) {
       const numbered = `${wanted} (${n})`;
-      if (numbered.length <= 120 && !(await held(numbered))) return numbered;
+      if (numbered.length <= MAX_TITLE_LENGTH && !(await held(numbered))) {
+        return numbered;
+      }
     }
 
     // Every candidate is taken, which means the category already holds a

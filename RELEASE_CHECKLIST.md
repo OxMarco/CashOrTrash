@@ -14,8 +14,15 @@ a deployment pass; supply the real release inputs instead.
   uploading a photograph, satisfy yourself you have the right to publish it —
   nothing in the pipeline checks that, and every image is publicly reachable.
 - [ ] Replace every example value in the production `.env`, including `DOMAIN`,
-  `SUPPORT_EMAIL`, `ACME_EMAIL`, the database password, three independent auth
-  and game secrets, and `OPENAI_API_KEY`.
+  `SUPPORT_EMAIL`, `ACME_EMAIL`, three independent auth and game secrets, and
+  `OPENAI_API_KEY`.
+- [ ] Set `POSTGRES_PASSWORD` in the production `.env`. `docker-compose.prod.yml`
+  passes it to the postgres, app and db-backup services and refuses to start
+  without it. Postgres only reads it when the data volume is first created: on
+  a host whose volume already exists, either set it to the current password
+  (`cashortrash` for volumes created before it was configurable) or change the
+  password first with `make psql` → `ALTER USER cashortrash PASSWORD '…';`,
+  then update `.env` and recreate `app` and `db-backup`.
 - [ ] Set `APPLE_APP_ID` to the Apple Team ID plus the shipped bundle ID. Set
   `ANDROID_APP_PACKAGE` and the Play App Signing certificate's SHA-256
   fingerprint, not a local debug certificate.
@@ -44,9 +51,15 @@ a deployment pass; supply the real release inputs instead.
 
 ## Deploy and verify
 
-- [ ] Run `make deploy`, then confirm `make health` shows the API, database,
-  Redis, local backup, and off-site backup services healthy.
+- [ ] Run `make deploy`, then confirm `make health` shows `app`, `postgres`,
+  `redis` and `db-backup` healthy. `db-backup` only writes to `./backups` on
+  this host; there is no off-site backup service in the stack, so confirm the
+  off-host copy arranged above is still running separately.
 - [ ] Confirm `/health/ready` reports the database, Redis and queue healthy.
+  The public body carries only up/down per dependency; the reason is in the app
+  log. The queue is down for 24h after any maintenance job exhausts its
+  retries — `make queue-failed` shows which and why, and once the cause is
+  fixed `make queue-clean-failed` clears it.
 - [ ] Upload one item and confirm the copy job replaces its typed-in text with
   written prose in English, Spanish, Portuguese and Italian within a minute, and
   that no description mentions the price.

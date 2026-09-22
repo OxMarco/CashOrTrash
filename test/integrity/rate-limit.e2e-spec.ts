@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 
 import { AppConfig } from '../../src/config/configuration';
 import { GameSession } from '../../src/modules/sessions/entities/game-session.entity';
+import { hashDeviceId } from '../../src/modules/users/device-id';
 import { Api } from '../support/api-client';
 import { registerPlayer } from '../support/players';
 import {
@@ -287,11 +288,32 @@ describe('rate limiting', () => {
       await registerPlayer(api, 'rate-device-0006', 'traced');
 
       const [row] = await ctx.dataSource.query(
-        'SELECT "registrationIp" FROM "user" WHERE "deviceId" = $1',
-        ['rate-device-0006'],
+        'SELECT "registrationIp" FROM "user" WHERE "deviceIdHash" = $1',
+        [hashDeviceId('rate-device-0006')],
       );
 
       expect(row.registrationIp).toBeTruthy();
+    });
+
+    /**
+     * The device id is the account's credential; the table keeps only its
+     * digest. Asserted against the SQL expression the hashing migration uses,
+     * so the application's digest and the one written over pre-existing rows
+     * are proven to be the same function — if they ever drifted, every player
+     * migrated in place would register as a stranger on their next launch.
+     */
+    it('stores the device id only as the digest the migration computes', async () => {
+      await registerPlayer(api, 'rate-device-0007', 'hashed');
+
+      const rows = await ctx.dataSource.query(
+        `SELECT "deviceIdHash" FROM "user"
+          WHERE "deviceIdHash" = encode(sha256(convert_to($1::text, 'UTF8')), 'hex')`,
+        ['rate-device-0007'],
+      );
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].deviceIdHash).toBe(hashDeviceId('rate-device-0007'));
+      expect(rows[0].deviceIdHash).not.toContain('rate-device');
     });
   });
 });

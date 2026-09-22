@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, LessThan, MoreThan, Repository } from 'typeorm';
 
+import { withLongStatements } from 'src/common/database/long-statements';
 import { toDto } from 'src/common/serialization/to-dto';
 import { addDays, isoWeekDates, todayUtc } from 'src/common/utils/date.util';
 import { AppRedis } from 'src/redis/redis-commands';
@@ -497,8 +498,13 @@ export class LeaderboardService {
    * ranks: equal scores share a place, as `getRank` reads them off Redis.
    */
   async snapshotRanks(date: string): Promise<number> {
-    const result = await this.dailyScores.query(
-      `
+    // Ranks every row of the day in one statement, so it gets the maintenance
+    // timeout rather than the request one — see `withLongStatements`.
+    const result: unknown = await withLongStatements(
+      this.dailyScores.manager,
+      (manager) =>
+        manager.query(
+          `
       WITH ranked AS (
         SELECT "userId",
                RANK() OVER (ORDER BY score DESC) AS new_rank
@@ -512,7 +518,8 @@ export class LeaderboardService {
         AND d."challengeDate" = $1
         AND d."rank" IS DISTINCT FROM r.new_rank
       `,
-      [date],
+          [date],
+        ),
     );
 
     const updated = Array.isArray(result) ? ((result[1] as number) ?? 0) : 0;

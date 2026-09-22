@@ -2,7 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { digestOf } from './image-processor.service';
+import { sha256Hex } from './image-processor.service';
 import { MediaStore } from './media-store';
 
 /**
@@ -62,7 +62,7 @@ export class PlaceholderSeeder implements OnApplicationBootstrap {
       if (await this.store.has(PLACEHOLDER_DIGEST)) return;
 
       const bytes = await this.readAsset();
-      const actual = digestOf(bytes);
+      const actual = sha256Hex(bytes);
 
       if (actual !== PLACEHOLDER_DIGEST) {
         this.logger.error(

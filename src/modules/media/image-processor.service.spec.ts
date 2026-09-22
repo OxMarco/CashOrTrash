@@ -5,7 +5,7 @@ import sharp from 'sharp';
 import {
   CARD_HEIGHT,
   CARD_WIDTH,
-  digestOf,
+  sha256Hex,
   ImageProcessor,
   MAX_SOURCE_PIXELS,
 } from './image-processor.service';
@@ -142,7 +142,7 @@ describe('ImageProcessor', () => {
     it('names each derivative by the sha256 of its own bytes', async () => {
       const result = await processor.normalise(await swatch());
 
-      expect(result.digest).toBe(digestOf(result.bytes));
+      expect(result.digest).toBe(sha256Hex(result.bytes));
     });
   });
 

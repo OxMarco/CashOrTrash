@@ -133,8 +133,9 @@ Keep the title under ${MAX_TRANSLATED_TITLE_LENGTH} characters and the descripti
  * nothing checked.
  *
  * Deliberately no lengths and no content rules here, though Zod could express
- * both. A schema failure rejects the whole reply, and these come back eight
- * items at a time: one overlong title would cost the other seven their copy.
+ * both. A schema failure rejects the whole reply, and these come back
+ * `BATCH_SIZE` items at a time: one overlong title would cost the rest of the
+ * batch their copy.
  * `vet` applies those per item instead, drops only the offender, and says in
  * the log which rule it broke — see the note there.
  */
@@ -171,6 +172,59 @@ export interface CopyRequest {
 export interface ItemCopy {
   title: string;
   conditionLine: string;
+}
+
+/**
+ * The model could not be reached, as opposed to the model saying no.
+ *
+ * The distinction the copy pass turns on. A refusal, a truncation or a leak is
+ * an answer about *these items*, and asking again pays for the same answer —
+ * so those are absorbed per batch and the item keeps its portal text. A dead
+ * connection, a timeout, a 429 or a 5xx is an answer about *the provider*, and
+ * says nothing about the items at all: clearing their flag on it would turn a
+ * ten-minute outage into a catalogue with no descriptions that nothing ever
+ * comes back to. Those stop the pass and are thrown, so the job retries and
+ * the boot catch-up can find what is still flagged.
+ *
+ * Carries what was already written, so copy that has been paid for is not
+ * thrown away with the error, and which refs got an answer of either kind — a
+ * ref in `settled` but not in `partial` was declined, and is not re-asked.
+ */
+export class CopywriterUnavailableError extends Error {
+  constructor(
+    readonly partial: Map<string, ItemCopy>,
+    readonly settled: ReadonlySet<string>,
+    readonly reason: unknown,
+  ) {
+    super(
+      `OpenAI unavailable: ${reason instanceof Error ? reason.message : String(reason)}`,
+    );
+    this.name = 'CopywriterUnavailableError';
+  }
+}
+
+/**
+ * Whether a failed request says something about the provider rather than the
+ * batch.
+ *
+ * Transport failures and timeouts, rate limits and 5xx are the obvious ones.
+ * Auth (401/403) and a missing model (404) are here too: they are a
+ * misconfiguration the operator has to fix, and every item that arrives while
+ * the key is wrong deserves its copy once it is right — not a cleared flag and
+ * an empty line. Only 400 and 422 are about the request itself (an image the
+ * provider will not take, a payload it cannot parse), and those are treated
+ * like a refusal. Anything that is not an HTTP error at all — a refusal, a
+ * truncation, an unparseable body, all thrown by `ask` — is about the batch.
+ *
+ * Checked after the SDK's own retries (`openaiMaxRetries`) have run out, so
+ * reaching here is a sustained failure and not one dropped packet.
+ */
+export function isProviderFailure(error: unknown): boolean {
+  if (error instanceof OpenAI.APIConnectionError) return true;
+  if (!(error instanceof OpenAI.APIError)) return false;
+  const status = error.status;
+  if (status === undefined) return false;
+  return status !== 400 && status !== 422;
 }
 
 export interface TranslationRequest {
@@ -219,13 +273,18 @@ export class ItemCopywriter {
   /**
    * Copy for each request, keyed by `ref`.
    *
-   * Never throws and never partially fails the caller: an item the model
-   * refused, truncated, or leaked on is simply absent from the map, and the
-   * import falls back to what the filename said. A missing description is a
-   * worse item; a failed deploy is a worse outage.
+   * An item the model refused, truncated, or leaked on is simply absent from
+   * the map, and the caller falls back to what the portal was given. A missing
+   * description is a worse item; a failed pass over one refusal is a worse
+   * outage.
+   *
+   * The one thing that does throw is the provider being unreachable — see
+   * `CopywriterUnavailableError`. The batches after it are not attempted: they
+   * would fail the same way, each after its own timeout and retries.
    */
   async write(requests: CopyRequest[]): Promise<Map<string, ItemCopy>> {
     const written = new Map<string, ItemCopy>();
+    const settled = new Set<string>();
     if (requests.length === 0 || !this.available) return written;
 
     for (let start = 0; start < requests.length; start += BATCH_SIZE) {
@@ -234,7 +293,12 @@ export class ItemCopywriter {
         for (const [ref, copy] of await this.writeBatch(batch)) {
           written.set(ref, copy);
         }
+        for (const item of batch) settled.add(item.ref);
       } catch (error) {
+        if (isProviderFailure(error)) {
+          throw new CopywriterUnavailableError(written, settled, error);
+        }
+        for (const item of batch) settled.add(item.ref);
         const why = error instanceof Error ? error.message : String(error);
         this.logger.warn(
           `Copy for ${batch.length} item(s) failed (${why}) — they keep the text their filenames gave`,
@@ -251,8 +315,8 @@ export class ItemCopywriter {
    * A separate request per language rather than one call returning all of them.
    * The combined shape is fewer round trips and was the obvious first design,
    * but this service is built so that "one refusal costs little" — `BATCH_SIZE`
-   * is 8 for that reason — and a nested reply makes one refusal cost eight
-   * items times every language at once. Here a failed Italian batch leaves
+   * is kept small for that reason — and a nested reply makes one refusal cost
+   * the whole batch times every language at once. Here a failed Italian batch leaves
    * Italian falling back to English and touches nothing else, which is the same
    * bargain the English pass already makes with the filename.
    *
@@ -300,6 +364,19 @@ export class ItemCopywriter {
         }
       } catch (error) {
         const why = error instanceof Error ? error.message : String(error);
+        // Not thrown, unlike `write`. The English is already committed and the
+        // item's flag already cleared, so there is nothing for a retry to find;
+        // a translation lost to an outage falls back to English like a refused
+        // one, and Rewrite in the portal is how it is asked for again. What an
+        // outage does change is whether the rest of this language is worth
+        // attempting — each batch would wait out its own timeout to fail.
+        if (isProviderFailure(error)) {
+          const left = requests.length - start;
+          this.logger.error(
+            `${locale} copy stopped: OpenAI unavailable (${why}) — ${left} item(s) fall back to English`,
+          );
+          break;
+        }
         this.logger.warn(
           `${locale} copy for ${batch.length} item(s) failed (${why}) — they fall back to English`,
         );
@@ -423,8 +500,8 @@ export class ItemCopywriter {
    * leave a row half-written by the model and half by the filename.
    *
    * Kept out of the schema on purpose. These are per-item policy, and the batch
-   * is eight items: expressing them as `z.string().max(120)` would fail the
-   * parse and cost the other seven their copy over one long title. This also
+   * is several items: expressing them as `z.string().max(120)` would fail the
+   * parse and cost the others their copy over one long title. This also
    * keeps the reason in the log, which "invalid response" would not.
    *
    * The schema does guarantee the three fields exist and are strings, so this

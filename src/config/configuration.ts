@@ -155,6 +155,21 @@ export const databaseConfig = registerAs('database', () => ({
   password: process.env.DATABASE_PASSWORD ?? 'cashortrash',
   database: process.env.DATABASE_NAME ?? 'cashortrash',
   ssl: bool(process.env.DATABASE_SSL, false),
+  /**
+   * Handed to `pg`'s pool as-is. Fallbacks agree with the Joi defaults, which
+   * win anyway — see the note on `minRoundSeconds`.
+   *
+   * `max` is per process, so the database sees it once per replica plus the
+   * worker's; keep replicas × max under Postgres's `max_connections`.
+   * `connectionTimeoutMs` bounds how long a request queues for a free client
+   * before failing — without it a saturated pool makes requests wait forever
+   * rather than answer 500. `statementTimeoutMs` is a server-side limit on any
+   * one statement from this pool; the few slow-by-design ones raise it for
+   * their own transaction (`withLongStatements`, and the migrations).
+   */
+  poolMax: int(process.env.DATABASE_POOL_MAX, 10),
+  connectionTimeoutMs: int(process.env.DATABASE_CONNECTION_TIMEOUT_MS, 5_000),
+  statementTimeoutMs: int(process.env.DATABASE_STATEMENT_TIMEOUT_MS, 15_000),
 }));
 
 export const redisConfig = registerAs('redis', () => ({

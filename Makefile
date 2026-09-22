@@ -1,7 +1,7 @@
 COMPOSE := docker compose -f docker-compose.prod.yml
 COMPOSE_DEV := docker compose -f docker-compose.local.yml
 
-.PHONY: help dev dev-deps dev-down dev-logs up down restart deploy build smoke pull logs ps psql redis-cli sh status health prune db-backup db-restore
+.PHONY: help dev dev-deps dev-down dev-logs up down restart deploy build smoke pull logs ps psql redis-cli sh status health prune db-backup db-restore queue-failed queue-clean-failed
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -91,6 +91,22 @@ redis-cli: ## Open redis-cli against the prod redis
 
 sh: ## Shell into the running app container
 	$(COMPOSE) exec app sh
+
+# Readiness fails for 24h after any maintenance job exhausts its retries (see
+# src/health/queue.health.ts). Once the cause is understood and fixed, this
+# clears the alarm without waiting out the window. Read `queue-failed` first:
+# the failed set is the only record of what went wrong, and this deletes it.
+# Run inside the app container so it uses the app's own BullMQ and Redis
+# settings rather than a second copy of them here.
+QUEUE_NODE = $(COMPOSE) exec -T app node -e 'const {Queue}=require("bullmq"); \
+	const q=new Queue("maintenance",{connection:{host:process.env.REDIS_HOST,port:Number(process.env.REDIS_PORT||6379), \
+	password:process.env.REDIS_PASSWORD||undefined,db:Number(process.env.REDIS_DB||0)}});
+
+queue-failed: ## List the most recent failed maintenance jobs and why
+	$(QUEUE_NODE) q.getFailed(0,19).then((jobs)=>{for(const j of jobs)console.log(new Date(j.finishedOn||j.timestamp).toISOString(),j.name,j.id,"attempts="+j.attemptsMade,j.failedReason);return q.close();}).catch((e)=>{console.error(e);process.exit(1);});'
+
+queue-clean-failed: ## Delete every failed maintenance job, clearing the readiness alarm
+	$(QUEUE_NODE) q.clean(0,100000,"failed").then((ids)=>{console.log("Removed "+ids.length+" failed job(s)");return q.close();}).catch((e)=>{console.error(e);process.exit(1);});'
 
 prune: ## Remove dangling images and stopped containers
 	docker system prune -f

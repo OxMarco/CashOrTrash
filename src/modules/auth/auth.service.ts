@@ -2,13 +2,13 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { ThrottlerException } from '@nestjs/throttler';
-import { createHash } from 'node:crypto';
 
 import { toDto } from 'src/common/serialization/to-dto';
 import { todayUtc } from 'src/common/utils/date.util';
 import { AppConfig, AuthConfig } from 'src/config/configuration';
 import { AppRedis } from 'src/redis/redis-commands';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
+import { hashDeviceId } from '../users/device-id';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
 import { TokenType } from './auth.types';
@@ -81,8 +81,9 @@ export class AuthService {
     // the budget for every already-seen address until the counters expired.
     const key = `auth:mintset:${ip}:${todayUtc()}`;
     // The device id is a credential. Redis only needs a stable equality key,
-    // so retain its digest rather than another copy of the credential itself.
-    const device = createHash('sha256').update(deviceId).digest('hex');
+    // so retain its digest rather than another copy of the credential itself —
+    // the same digest the `user` row stores, from the same function.
+    const device = hashDeviceId(deviceId);
     let reserved: boolean;
     try {
       reserved =

@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { DataSource } from 'typeorm';
@@ -48,6 +48,9 @@ export class MaintenanceProcessor extends WorkerHost {
       case JOBS.PUSH_DAILY_NUDGE:
         return { sent: await this.notifications.sendDailyNudges() };
 
+      case JOBS.PUSH_RECEIPTS_CHECK:
+        return this.notifications.checkPushReceipts();
+
       case JOBS.LEADERBOARD_REBUILD:
         return this.rebuild(job.data as { date?: string });
 
@@ -67,6 +70,61 @@ export class MaintenanceProcessor extends WorkerHost {
         this.logger.warn(`Unknown job: ${job.name}`);
         return null;
     }
+  }
+
+  /**
+   * A job threw. Logged on every attempt, not only the last, because the
+   * attempts are where the story is: a job that fails twice and passes on the
+   * third is a flaky dependency worth knowing about, and without this the only
+   * trace of it would be the backoff delay. `attemptsMade` already counts this
+   * one when the event fires.
+   *
+   * The final failure is the one readiness reacts to — see `QueueHealthIndicator`
+   * — so it is logged at error and says so.
+   */
+  @OnWorkerEvent('failed')
+  onFailed(job: Job | undefined, error: Error): void {
+    if (!job) {
+      // BullMQ passes no job when the failure was in fetching one — a lock
+      // lost before the job could be read, for instance.
+      this.logger.error(
+        `A job failed before it could be read: ${error.message}`,
+      );
+      return;
+    }
+    const attempts = job.opts.attempts ?? 1;
+    const final = job.attemptsMade >= attempts;
+    const line =
+      `${job.name} (${job.id}) failed on attempt ${job.attemptsMade}/${attempts}` +
+      `${final ? ' — giving up' : ' — will retry'}: ${error.message}`;
+    if (final) this.logger.error({ err: error }, line);
+    else this.logger.warn(line);
+  }
+
+  /**
+   * The worker holding a job stopped renewing its lock — a process killed
+   * mid-job, or an event loop blocked past the lock duration. BullMQ moves the
+   * job back to waiting (or fails it after `maxStalledCount`), so nothing is
+   * lost, but a job that stalls is one that may run twice.
+   */
+  @OnWorkerEvent('stalled')
+  onStalled(jobId: string, previous: string): void {
+    this.logger.warn(
+      `Job ${jobId} stalled (was ${previous}) and will be re-run`,
+    );
+  }
+
+  /**
+   * The worker itself erred — almost always its Redis connection. Without a
+   * listener this surfaces nowhere: the worker retries on its own, and the only
+   * symptom would be jobs that quietly stop running.
+   */
+  @OnWorkerEvent('error')
+  onError(error: Error): void {
+    this.logger.error(
+      { err: error },
+      `Maintenance worker error: ${error.message}`,
+    );
   }
 
   /**

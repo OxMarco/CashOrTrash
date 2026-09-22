@@ -29,6 +29,7 @@ import {
   SessionStatus,
 } from '../sessions/entities/game-session.entity';
 import { SessionRound } from '../sessions/entities/session-round.entity';
+import { hashDeviceId } from './device-id';
 import { User } from './entities/user.entity';
 import { UsernameService, USERNAME_TAKEN } from './username.service';
 
@@ -42,7 +43,22 @@ import { UsernameService, USERNAME_TAKEN } from './username.service';
  */
 const EXISTS_CACHE_TTL_MS = 30_000;
 
+/**
+ * How long a deletion is remembered after it commits.
+ *
+ * Dropping the positive entry is not enough on its own: a request that read
+ * the row just before the deletion committed can write "exists" back into the
+ * cache after the delete has already cleared it, and that stale positive would
+ * then keep a deleted player's token working for a full `EXISTS_CACHE_TTL_MS`.
+ * The tombstone is checked first and outlives any positive written in that
+ * window by a wide margin. Ids are never reused (the key is a serial), so a
+ * tombstone can never shadow a live account; its length only bounds how late
+ * such a straggling write may land and still be overruled.
+ */
+const DELETED_TOMBSTONE_TTL_MS = 5 * 60_000;
+
 const existsCacheKey = (id: number): string => `auth:user-exists:${id}`;
+const deletedCacheKey = (id: number): string => `auth:user-deleted:${id}`;
 
 /** How far into today's challenge a player is — see `DailyProgressDto`. */
 export interface DailyProgress {
@@ -226,7 +242,8 @@ export class UsersService {
    * Only the positive is cached. A miss is a token for an account that is gone
    * or never was, which is rare and not worth remembering, and never caching it
    * keeps the failure mode "one query too many" rather than "a live account
-   * locked out".
+   * locked out". The one negative that is remembered is the deletion
+   * tombstone, written only after a deletion has committed.
    *
    * Cache faults fall through to the database: this is an availability
    * optimisation, and it must not become a way for Redis to refuse logins.
@@ -234,7 +251,13 @@ export class UsersService {
   async stillExists(id: number): Promise<boolean> {
     const key = existsCacheKey(id);
 
-    const cached = await this.cache.get<boolean>(key).catch(() => undefined);
+    // One round trip for both: this runs in front of every authenticated
+    // request. The tombstone wins over a positive — see
+    // `DELETED_TOMBSTONE_TTL_MS` for how the two can coexist.
+    const [deleted, cached] = await this.cache
+      .mget<boolean>([deletedCacheKey(id), key])
+      .catch(() => [undefined, undefined]);
+    if (deleted) return false;
     if (cached) return true;
 
     const exists = await this.users.exist({ where: { id } });
@@ -260,19 +283,25 @@ export class UsersService {
    * budget, and coming back must always be free.
    */
   findByDeviceId(deviceId: string): Promise<User | null> {
-    return this.users.findOne({ where: { deviceId } });
+    return this.users.findOne({
+      where: { deviceIdHash: hashDeviceId(deviceId) },
+    });
   }
 
   /**
    * Two devices posting the same id concurrently must not create two players.
    * `ON CONFLICT DO NOTHING` plus a re-read makes the race resolve in the
    * database rather than in a lock we would have to maintain.
+   *
+   * Takes the plaintext id and hashes it here, so no caller can store or look
+   * up the credential in the clear by passing the wrong string.
    */
   async findOrCreateByDeviceId(
     deviceId: string,
     registrationIp: string | null = null,
   ): Promise<{ user: User; created: boolean }> {
-    const existing = await this.users.findOne({ where: { deviceId } });
+    const deviceIdHash = hashDeviceId(deviceId);
+    const existing = await this.users.findOne({ where: { deviceIdHash } });
     if (existing) return { user: existing, created: false };
 
     const result = await this.users
@@ -280,7 +309,7 @@ export class UsersService {
       .insert()
       .into(User)
       .values({
-        deviceId,
+        deviceIdHash,
         avatarSeed: randomBytes(8).toString('hex'),
         // Only ever written here. A returning device does not touch it, so the
         // column keeps saying where the account came from rather than where it
@@ -295,7 +324,7 @@ export class UsersService {
     if (inserted) return { user: inserted, created: true };
 
     // Lost the race — the winner's row is there now.
-    const user = await this.users.findOne({ where: { deviceId } });
+    const user = await this.users.findOne({ where: { deviceIdHash } });
     if (!user) throw new ConflictException('Could not register device');
     return { user, created: false };
   }
@@ -348,26 +377,57 @@ export class UsersService {
    * affected head-to-head object and both of its sessions are removed together,
    * then the player's remaining sessions. Rows with CASCADE relations (scores,
    * friends and push tokens) leave with the user.
+   *
+   * The opponent keeps what those matches paid them. Their `totalPoints` and
+   * `bestRoundScore` were earned, and one player leaving must not take points
+   * away from another — so the opponent's lifetime stats deliberately stop
+   * adding up to the rounds still stored for them.
    */
   async deleteAccount(userId: number): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
-      const [user] = await manager.query<Array<{ id: number }>>(
+      // Lock order is user → session → match, the same order a bet takes
+      // (player, its session, then the match it reconciles). Locking the
+      // matches first would let an opponent's bet hold its session while
+      // waiting on a match this transaction holds, and this transaction then
+      // wait on that session to delete it: a deadlock. So the match ids are
+      // only read here, and locked after every session they cover. Rows at the
+      // same level are locked in id order, so two deletions sharing a match
+      // queue behind each other instead of crossing.
+      const locked = await manager.query<Array<{ id: number }>>(
         'SELECT id FROM "user" WHERE id = $1 FOR UPDATE',
         [userId],
       );
-      if (!user) throw new NotFoundException('Player not found');
+      if (!locked.some((row) => row.id === userId)) {
+        throw new NotFoundException('Player not found');
+      }
 
+      // Read under the lock, so every match this player is part of is found;
+      // one missed here would survive to fail the delete on its restrictive
+      // foreign key.
       const matches = await manager.query<Array<{ id: string }>>(
         `SELECT id FROM "match"
           WHERE "hostUserId" = $1
              OR "guestUserId" = $1
              OR "winnerUserId" = $1
-          FOR UPDATE`,
+          ORDER BY id`,
         [userId],
       );
+      const ids = matches.map((match) => match.id);
 
-      if (matches.length > 0) {
-        const ids = matches.map((match) => match.id);
+      await manager.query(
+        `SELECT id FROM "game_session"
+          WHERE "userId" = $1 OR "matchId" = ANY($2::uuid[])
+          ORDER BY id
+          FOR UPDATE`,
+        [userId, ids],
+      );
+
+      if (ids.length > 0) {
+        await manager.query(
+          `SELECT id FROM "match" WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
+          [ids],
+        );
+
         await manager
           .createQueryBuilder()
           .delete()
@@ -386,9 +446,15 @@ export class UsersService {
       await manager.delete(User, { id: userId });
     });
 
-    // After the commit, so the key cannot be repopulated by a concurrent
-    // request reading the row this transaction was still holding. Best effort:
-    // the entry expires on its own, and the authoritative row is already gone.
+    // After the commit — a tombstone written before it would lock a live
+    // player out if the transaction then rolled back. A request that read the
+    // row before the commit can still write a positive entry after this; the
+    // tombstone is what overrules it, and the `del` only saves the next request
+    // a wasted hit. Best effort: the entry expires on its own, and the
+    // authoritative row is already gone.
+    await this.cache
+      .set(deletedCacheKey(userId), true, DELETED_TOMBSTONE_TTL_MS)
+      .catch(() => undefined);
     await this.cache.del(existsCacheKey(userId)).catch(() => undefined);
   }
 

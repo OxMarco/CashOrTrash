@@ -2,7 +2,7 @@ import 'reflect-metadata';
 
 import { readFile } from 'node:fs/promises';
 
-import { digestOf } from './image-processor.service';
+import { sha256Hex } from './image-processor.service';
 import {
   PLACEHOLDER_ASSET_PATHS,
   PLACEHOLDER_DIGEST,
@@ -17,7 +17,7 @@ describe('the placeholder item photo', () => {
     // is the cheap version of finding that out.
     const bytes = await readFile(PLACEHOLDER_ASSET_PATHS[0]);
 
-    expect(digestOf(bytes)).toBe(PLACEHOLDER_DIGEST);
+    expect(sha256Hex(bytes)).toBe(PLACEHOLDER_DIGEST);
   });
 
   it('is addressed by a URL the media route will actually accept', () => {

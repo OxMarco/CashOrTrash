@@ -10,12 +10,14 @@ import {
 import { Public } from 'src/common/decorators/public.decorator';
 import { RawResponse } from 'src/common/interceptors/dto-serializer.interceptor';
 import { QueueHealthIndicator } from './queue.health';
+import { redactHealthDetails } from './redact-health';
 import { RedisHealthIndicator } from './redis.health';
 
 /**
  * The only controller carrying `@RawResponse()`: Terminus owns the payload
  * shape and it contains no domain data, so there is nothing here for the
- * serializer to protect.
+ * serializer to protect. What it can contain is infrastructure detail, which
+ * is stripped by hand instead — see `redactHealthDetails`.
  */
 @ApiTags('health')
 @RawResponse()
@@ -52,11 +54,21 @@ export class HealthController {
   @ApiOperation({
     summary: 'Readiness probe — database, Redis and queue.',
   })
-  ready(): Promise<HealthCheckResult> {
-    return this.health.check([
+  async ready(): Promise<HealthCheckResult> {
+    // A failure never reaches the lines below: Terminus throws a 503 whose
+    // body `AllExceptionsFilter` redacts (and logs in full). This is the
+    // passing case — queue depths and Redis latency are harmless on their own,
+    // but the public shape should not depend on which path answered.
+    const result = await this.health.check([
       () => this.db.pingCheck('database', { timeout: 2000 }),
       () => this.redis.isHealthy('redis'),
       () => this.queue.isHealthy('queue'),
     ]);
+    return {
+      status: result.status,
+      info: redactHealthDetails(result.info),
+      error: redactHealthDetails(result.error),
+      details: redactHealthDetails(result.details),
+    };
   }
 }

@@ -22,6 +22,7 @@ import {
   ThrottleConfig,
 } from './config/configuration';
 import { envValidationSchema } from './config/env.validation';
+import { databasePoolOptions } from './database/pool-options';
 import { SchemaExtras } from './database/schema-extras';
 import { HealthModule } from './health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -97,6 +98,7 @@ import { buildBullRedisOptions, RedisModule } from './redis/redis.module';
           password: db.password,
           database: db.database,
           ssl: db.ssl ? { rejectUnauthorized: false } : false,
+          extra: databasePoolOptions(db),
           autoLoadEntities: true,
           synchronize: false,
           migrationsRun: true,

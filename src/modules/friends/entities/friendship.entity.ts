@@ -2,6 +2,7 @@ import {
   Check,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   PrimaryColumn,
@@ -26,6 +27,13 @@ export class Friendship {
   })
   user?: User;
 
+  /**
+   * The primary key leads with `userId`, so it serves "my friends" but not the
+   * reverse. This index is for the `CASCADE` from `user`: deleting an account
+   * has to find every row naming it as the friend, and without it that is a
+   * scan of the whole table.
+   */
+  @Index('ix_friendship_friend_user')
   @PrimaryColumn({ type: 'int' })
   friendUserId: number;
 

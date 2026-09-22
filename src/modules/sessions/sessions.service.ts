@@ -405,6 +405,18 @@ export class SessionsService {
     const result = await this.dataSource.transaction(async (manager) => {
       const sessionRepo = manager.getRepository(GameSession);
 
+      // Every transaction that writes these rows locks them in one order:
+      // user → session → match. Session creation (which abandons the player's
+      // active sessions) and account deletion both start from the player, so
+      // the bet does too — otherwise a bet and a new quick session can each
+      // hold the row the other needs and deadlock. The match is locked last,
+      // in `reconcileRound`.
+      const player = await manager.getRepository(User).findOne({
+        where: { id: userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!player) throw new NotFoundException('Player not found');
+
       // 1. Serialise concurrent submits on this session.
       const session = await sessionRepo.findOne({
         where: { id: sessionId },
@@ -1041,7 +1053,18 @@ export class SessionsService {
     const results = rounds
       .map((round) => {
         const item = itemById.get(round.itemId);
-        return item ? this.toRoundResult(round, item, currency, copy) : null;
+        if (!item) return null;
+        // The rate the round was bet at, when the summary is asked for in the
+        // same currency. Without it the summary re-quotes the round at today's
+        // rate, so a range the reveal showed as 90–110 can come back as 91–112
+        // on the results screen — the same bet, disagreeing with itself. A
+        // summary in another currency has no stored quote to honour and uses
+        // the live one, as a converted view always has.
+        const rate =
+          round.currency === currency && round.exchangeRate !== null
+            ? round.exchangeRate
+            : undefined;
+        return this.toRoundResult(round, item, currency, copy, rate);
       })
       .filter((result): result is RoundResultDto => result !== null);
 

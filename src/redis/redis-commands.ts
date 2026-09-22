@@ -30,6 +30,13 @@ const DELETE_IF_VALUE = `
   return 0
 `;
 
+const CONSUME_SOCKET_MESSAGE = `
+  local used = redis.call('incr', KEYS[1])
+  if used == 1 then redis.call('expire', KEYS[1], ARGV[2]) end
+  if used <= tonumber(ARGV[1]) then return 1 end
+  return 0
+`;
+
 export type AppRedis = Redis & {
   reserveDistinctDevice(
     key: string,
@@ -46,6 +53,11 @@ export type AppRedis = Redis & {
     ttlSeconds: number,
   ): Promise<number>;
   deleteIfValue(key: string, expectedValue: string): Promise<number>;
+  consumeSocketMessage(
+    key: string,
+    limit: number,
+    ttlSeconds: number,
+  ): Promise<number>;
 };
 
 /**
@@ -65,6 +77,10 @@ export const defineRedisCommands = (redis: Redis): AppRedis => {
   redis.defineCommand('deleteIfValue', {
     numberOfKeys: 1,
     lua: DELETE_IF_VALUE,
+  });
+  redis.defineCommand('consumeSocketMessage', {
+    numberOfKeys: 1,
+    lua: CONSUME_SOCKET_MESSAGE,
   });
   return redis as AppRedis;
 };

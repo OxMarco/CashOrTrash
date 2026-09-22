@@ -103,7 +103,7 @@ export class ImageProcessor {
       throw this.undecodable(metadata, error as Error);
     }
 
-    return { digest: digestOf(bytes), bytes };
+    return { digest: sha256Hex(bytes), bytes };
   }
 
   /**
@@ -160,6 +160,16 @@ export class ImageProcessor {
   }
 }
 
-export function digestOf(bytes: Buffer): string {
+/**
+ * The full SHA-256 of a photograph's bytes — its content address in the store.
+ *
+ * Named for what it is rather than `digestOf`, which is the name of the
+ * 16-character JSON change detector in `common/serialization`. The two are not
+ * interchangeable: that one is truncated and hashes a serialisation, this one
+ * must match `DIGEST_PATTERN` to the character, and an auto-import picking the
+ * wrong one would compile and then address every photo at a path that does not
+ * exist.
+ */
+export function sha256Hex(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }

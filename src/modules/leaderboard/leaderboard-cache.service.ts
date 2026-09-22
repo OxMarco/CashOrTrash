@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
 import { Repository } from 'typeorm';
 
+import { withLongStatements } from 'src/common/database/long-statements';
 import { isoWeekDates, todayUtc } from 'src/common/utils/date.util';
 import { AppRedis } from 'src/redis/redis-commands';
 import { REDIS_CLIENT } from 'src/redis/redis.constants';
@@ -140,14 +141,22 @@ export class LeaderboardCacheService {
     // scrub in `removeUser`, the hourly rebuild and the key TTL all remove it,
     // and no lock available here would close that window without reintroducing
     // the cluster-wide stall.
-    const rows = await this.dailyScores
-      .createQueryBuilder('s')
-      .innerJoin('user', 'u', 'u.id = s."userId"')
-      .select('s.userId', 'userId')
-      .addSelect('SUM(s.score)', 'score')
-      .where('s.challengeDate IN (:...dates)', { dates })
-      .groupBy('s.userId')
-      .getRawMany<{ userId: number; score: string }>();
+    //
+    // A whole week of scores in one aggregate, so it runs under the
+    // maintenance timeout rather than the request one — see
+    // `withLongStatements`. The transaction is only there to scope that
+    // setting; it takes no locks.
+    const rows = await withLongStatements(this.dailyScores.manager, (manager) =>
+      manager
+        .getRepository(DailyScore)
+        .createQueryBuilder('s')
+        .innerJoin('user', 'u', 'u.id = s."userId"')
+        .select('s.userId', 'userId')
+        .addSelect('SUM(s.score)', 'score')
+        .where('s.challengeDate IN (:...dates)', { dates })
+        .groupBy('s.userId')
+        .getRawMany<{ userId: number; score: string }>(),
+    );
 
     await this.replaceBoard(key, ttl, rows);
     this.logger.log(`Rebuilt ${key} from ${rows.length} rows`);

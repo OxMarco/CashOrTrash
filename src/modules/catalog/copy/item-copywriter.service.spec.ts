@@ -1,7 +1,10 @@
 import { ConfigService } from '@nestjs/config';
+import OpenAI from 'openai';
 
 import {
+  CopywriterUnavailableError,
   describeBatch,
+  isProviderFailure,
   ItemCopywriter,
   MAX_CONDITION_LENGTH,
   MAX_TITLE_LENGTH,
@@ -197,6 +200,79 @@ describe('ItemCopywriter', () => {
 
   it('writes nothing for an empty request list', async () => {
     await expect(build('sk-test').write([])).resolves.toEqual(new Map());
+  });
+
+  /**
+   * The line between "the model said no" and "the model could not be asked".
+   * The first is absorbed per batch and the item keeps its portal text; the
+   * second must reach the job, or an outage clears every flag it touches and
+   * nothing ever comes back for those items.
+   */
+  describe('when the provider is down rather than the model declining', () => {
+    const requests = ['1', '2', '3', '4', '5', '6'].map((ref) => ({
+      ref,
+      category: 'watches',
+      rawText: `seiko ${ref}`,
+      knownCondition: '',
+    }));
+    const ask = (writer: ItemCopywriter) =>
+      jest.spyOn(writer as unknown as { ask: () => Promise<unknown> }, 'ask');
+
+    it.each([
+      ['a dropped connection', new OpenAI.APIConnectionError({})],
+      ['a timeout', new OpenAI.APIConnectionTimeoutError()],
+      [
+        'a rate limit',
+        OpenAI.APIError.generate(429, {}, 'slow', new Headers()),
+      ],
+      ['a 503', OpenAI.APIError.generate(503, {}, 'down', new Headers())],
+      ['a revoked key', OpenAI.APIError.generate(401, {}, 'no', new Headers())],
+    ])('treats %s as the provider’s failure', (_, error) => {
+      expect(isProviderFailure(error)).toBe(true);
+    });
+
+    it.each([
+      ['a 400', OpenAI.APIError.generate(400, {}, 'bad', new Headers())],
+      ['a refusal', new Error('the model declined this batch: no')],
+      ['a truncation', new Error('the response was cut short (max tokens)')],
+    ])('treats %s as the batch’s', (_, error) => {
+      expect(isProviderFailure(error)).toBe(false);
+    });
+
+    it('throws with what was already written, and stops asking', async () => {
+      const writer = build('sk-test');
+      const asked = ask(writer)
+        .mockResolvedValueOnce({
+          items: [
+            { ref: '1', title: 'Seiko 1', conditionLine: 'Steel · 1978' },
+            // Declined by the filter: answered, so settled, but not written.
+            { ref: '2', title: 'Seiko 2', conditionLine: 'A rare one' },
+          ],
+        })
+        .mockRejectedValueOnce(new OpenAI.APIConnectionTimeoutError());
+
+      const failure = await writer.write(requests).catch((e: unknown) => e);
+
+      expect(failure).toBeInstanceOf(CopywriterUnavailableError);
+      const { partial, settled } = failure as CopywriterUnavailableError;
+      expect([...partial.keys()]).toEqual(['1']);
+      expect([...settled]).toEqual(['1', '2', '3', '4']);
+      // The second batch failed; there is no third call for batch two's
+      // remainder — it would only wait out the same timeout.
+      expect(asked).toHaveBeenCalledTimes(2);
+    });
+
+    it('absorbs a batch the model refused and carries on', async () => {
+      const writer = build('sk-test');
+      ask(writer)
+        .mockRejectedValueOnce(new Error('the model declined this batch: no'))
+        .mockResolvedValueOnce({
+          items: [{ ref: '5', title: 'Seiko 5', conditionLine: 'Steel' }],
+        });
+
+      const written = await writer.write(requests);
+      expect([...written.keys()]).toEqual(['5']);
+    });
   });
 
   describe('translating', () => {

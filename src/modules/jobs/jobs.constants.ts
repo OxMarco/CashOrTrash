@@ -11,6 +11,12 @@ export const JOBS = {
   LEADERBOARD_SNAPSHOT: 'leaderboard-snapshot',
   THEME_STATS_RECOMPUTE: 'theme-stats-recompute',
   PUSH_DAILY_NUDGE: 'push-daily-nudge',
+  /**
+   * Follows the nudge up: asks Expo for the receipts of what it sent and
+   * retires the devices that no longer exist. A send's ticket only says the
+   * message was accepted — an uninstalled app is usually only reported here.
+   */
+  PUSH_RECEIPTS_CHECK: 'push-receipts-check',
   LEADERBOARD_REBUILD: 'leaderboard-rebuild',
   /**
    * Ages out `user.registrationIp`, the only retained network identifier. It
@@ -61,6 +67,9 @@ export const JOB_SCHEDULES: Array<{ name: JobName; pattern: string }> = [
   { name: JOBS.LEADERBOARD_REBUILD, pattern: '15 * * * *' },
   // Hourly, but only fires the timezone buckets currently at the target hour.
   { name: JOBS.PUSH_DAILY_NUDGE, pattern: '0 * * * *' },
+  // Half an hour behind the nudge, past the fifteen minutes Expo asks callers
+  // to wait before receipts are ready.
+  { name: JOBS.PUSH_RECEIPTS_CHECK, pattern: '30 * * * *' },
   // Daily, in the quiet hour before the challenge generator.
   { name: JOBS.REGISTRATION_IP_PRUNE, pattern: '30 2 * * *' },
   // Alongside it, in the same quiet hour.

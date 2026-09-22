@@ -32,8 +32,8 @@ export class AuthController {
     @Body() dto: AnonymousAuthDto,
     @Req() req: FastifyRequest,
   ): Promise<AccessTokenDto> {
-    // Fastify runs with `trustProxy: 1`, so this is the client behind the one
-    // ingress hop rather than the hop itself.
+    // Fastify trusts exactly the one ingress hop (see `trustProxy`), so this is
+    // the client behind it rather than the hop itself.
     return this.auth.authenticateDevice(dto.deviceId, req.ip ?? null);
   }
 }

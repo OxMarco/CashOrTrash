@@ -75,6 +75,16 @@ export class Match {
   @Column({ type: 'varchar', length: 12 })
   inviteCode: string;
 
+  /**
+   * The three player columns are indexed because each is a foreign key into
+   * `user` with `RESTRICT`: deleting an account has to prove no match still
+   * points at it, and without an index that proof is a sequential scan of
+   * every match ever played — once per column, under the deletion's locks. The
+   * account-deletion lookup reads them too. The guest and winner indexes are
+   * partial, since a pending invite and an unfinished game carry no value to
+   * find.
+   */
+  @Index('ix_match_host_user')
   @Column({ type: 'int' })
   hostUserId: number;
 
@@ -85,6 +95,7 @@ export class Match {
   })
   hostUser?: User;
 
+  @Index('ix_match_guest_user', { where: '"guestUserId" IS NOT NULL' })
   @Column({ type: 'int', nullable: true })
   guestUserId: number | null;
 
@@ -105,6 +116,7 @@ export class Match {
   guestScore: number;
 
   /** Null on a draw as well as while in progress — read with `status`. */
+  @Index('ix_match_winner_user', { where: '"winnerUserId" IS NOT NULL' })
   @Column({ type: 'int', nullable: true })
   winnerUserId: number | null;
 

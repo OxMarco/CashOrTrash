@@ -68,8 +68,10 @@ export class JobsModule implements OnApplicationBootstrap {
    * The portal enqueues this itself on every upload, so in steady state the
    * boot run finds nothing. It exists for the case the portal cannot cover: a
    * process that died mid-pass, or an OpenAI outage that ran through the job's
-   * retries. Those items sit flagged in the database and would otherwise wait
-   * for the next upload to carry them along.
+   * retries. Those items sit flagged in the database — `ItemCopyService` clears
+   * the flag only on an item the model actually answered for, and fails the
+   * job on a provider error rather than swallowing it — and would otherwise
+   * wait for the next upload to carry them along.
    *
    * Queued rather than run here. `make deploy` smoke-tests `/health/ready`, and
    * a backlog that calls a language model for two dozen items would hold

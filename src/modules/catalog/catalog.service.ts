@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Cache } from 'cache-manager';
 import { In, Repository } from 'typeorm';
 
+import { withLongStatements } from 'src/common/database/long-statements';
 import { digestOf } from 'src/common/serialization/digest-of';
 import { toDto } from 'src/common/serialization/to-dto';
 import { todayUtc } from 'src/common/utils/date.util';
@@ -361,10 +362,13 @@ export class CatalogService {
   async recomputeThemeStats(): Promise<number> {
     const since = new Date(Date.now() - THEME_STATS_WINDOW_DAYS * MS_PER_DAY);
 
-    const rows = await this.items.query<
-      Array<{ themeId: number; avgErrorPct: string; sampleSize: string }>
-    >(
-      `
+    // Aggregates every round in the window, which grows with play rather than
+    // with the catalogue — the maintenance timeout, not the request one.
+    const rows = await withLongStatements(this.items.manager, (manager) =>
+      manager.query<
+        Array<{ themeId: number; avgErrorPct: string; sampleSize: string }>
+      >(
+        `
       SELECT i."themeId"            AS "themeId",
              AVG(ABS(r."errorPct")) AS "avgErrorPct",
              COUNT(*)               AS "sampleSize"
@@ -373,7 +377,8 @@ export class CatalogService {
       WHERE r."placedAt" >= $1::timestamptz
       GROUP BY i."themeId"
       `,
-      [since.toISOString()],
+        [since.toISOString()],
+      ),
     );
 
     const stats = rows.map((row) => ({

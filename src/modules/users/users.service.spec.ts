@@ -7,6 +7,7 @@ import { SessionRound } from '../sessions/entities/session-round.entity';
 import { ItemCopy } from '../catalog/entities/item-copy.entity';
 import { CurrencyService } from '../currency/currency.service';
 
+import { hashDeviceId } from './device-id';
 import { User } from './entities/user.entity';
 import { UsernameService } from './username.service';
 import { UsersService } from './users.service';
@@ -17,6 +18,7 @@ describe('UsersService leaderboard eligibility', () => {
   const dataSource = {} as DataSource;
   const cache = {
     get: jest.fn().mockResolvedValue(undefined),
+    mget: jest.fn().mockResolvedValue([undefined, undefined]),
     set: jest.fn().mockResolvedValue(undefined),
     del: jest.fn().mockResolvedValue(undefined),
   } as unknown as Cache;
@@ -54,6 +56,7 @@ describe('UsersService leaderboard eligibility', () => {
     hours: number,
     session: unknown = null,
     retentionDays = 30,
+    source: DataSource = dataSource,
   ): UsersService {
     const config = {
       getOrThrow: jest.fn().mockReturnValue({
@@ -81,11 +84,164 @@ describe('UsersService leaderboard eligibility', () => {
       copies,
       currency,
       usernames,
-      dataSource,
+      source,
       cache,
       config,
     );
   }
+
+  /**
+   * The device id is the account's credential, so the table holds only its
+   * digest — and the lookups have to ask for the digest, or every returning
+   * player would register as a stranger.
+   */
+  describe('device ids', () => {
+    it('looks a returning device up by its digest, never the id itself', async () => {
+      (users.findOne as jest.Mock).mockResolvedValue(null);
+
+      await makeService(0).findByDeviceId('device-abc-123');
+
+      expect(users.findOne).toHaveBeenCalledWith({
+        where: { deviceIdHash: hashDeviceId('device-abc-123') },
+      });
+    });
+
+    it('registers a new device under its digest', async () => {
+      const values = jest.fn();
+      const builder: Record<string, unknown> = {
+        execute: jest.fn().mockResolvedValue({ raw: [{ id: 9 }] }),
+      };
+      for (const step of ['insert', 'into', 'orIgnore', 'returning']) {
+        builder[step] = () => builder;
+      }
+      builder.values = (row: unknown) => {
+        values(row);
+        return builder;
+      };
+      (users as unknown as { createQueryBuilder: unknown }).createQueryBuilder =
+        () => builder;
+      (users.findOne as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        makeService(0).findOrCreateByDeviceId('device-abc-123', null),
+      ).resolves.toEqual({ user: { id: 9 }, created: true });
+
+      const row = values.mock.calls[0][0] as Record<string, unknown>;
+      expect(row.deviceIdHash).toBe(hashDeviceId('device-abc-123'));
+      expect(JSON.stringify(row)).not.toContain('device-abc-123');
+    });
+  });
+
+  /**
+   * A deleted player's token must stop working, and the cache in front of the
+   * existence check is the one thing that could keep it alive — a request that
+   * read the row just before the deletion committed can write "exists" back
+   * after the deletion cleared it.
+   */
+  describe('existence after deletion', () => {
+    it('answers from the cached positive without asking the database', async () => {
+      (cache.mget as jest.Mock).mockResolvedValue([undefined, true]);
+      (users as unknown as { exist: jest.Mock }).exist = jest.fn();
+
+      await expect(makeService(0).stillExists(5)).resolves.toBe(true);
+      expect(
+        (users as unknown as { exist: jest.Mock }).exist,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('lets the deletion tombstone overrule a positive written after it', async () => {
+      (cache.mget as jest.Mock).mockResolvedValue([true, true]);
+      (users as unknown as { exist: jest.Mock }).exist = jest.fn();
+
+      await expect(makeService(0).stillExists(5)).resolves.toBe(false);
+      expect(cache.mget).toHaveBeenCalledWith([
+        'auth:user-deleted:5',
+        'auth:user-exists:5',
+      ]);
+      expect(cache.set).not.toHaveBeenCalled();
+    });
+
+    it('falls through to the database when the cache is down', async () => {
+      (cache.mget as jest.Mock).mockRejectedValue(new Error('offline'));
+      (users as unknown as { exist: jest.Mock }).exist = jest
+        .fn()
+        .mockResolvedValue(true);
+
+      await expect(makeService(0).stillExists(5)).resolves.toBe(true);
+    });
+
+    it('writes a tombstone outliving the positive cache once the deletion commits', async () => {
+      const query = jest
+        .fn()
+        .mockImplementation((sql: string) =>
+          Promise.resolve(sql.includes('FROM "user"') ? [{ id: 5 }] : []),
+        );
+      const manager = { query, delete: jest.fn() };
+      const transactional = {
+        transaction: (run: (m: unknown) => Promise<void>) => run(manager),
+      } as unknown as DataSource;
+
+      await makeService(0, null, 30, transactional).deleteAccount(5);
+
+      expect(cache.set).toHaveBeenCalledWith(
+        'auth:user-deleted:5',
+        true,
+        expect.any(Number),
+      );
+      const ttl = (cache.set as jest.Mock).mock.calls[0][2] as number;
+      expect(ttl).toBeGreaterThanOrEqual(30_000);
+      expect(cache.del).toHaveBeenCalledWith('auth:user-exists:5');
+    });
+
+    /**
+     * Deleting an account removes the opponent's side of every shared match,
+     * but the opponent keeps the points those rounds paid them.
+     */
+    it('leaves the opponent’s totals untouched', async () => {
+      const query = jest.fn().mockImplementation((sql: string) => {
+        if (sql.startsWith('SELECT id FROM "user"')) {
+          return Promise.resolve([{ id: 5 }]);
+        }
+        if (sql.includes('SELECT id FROM "match"')) {
+          return Promise.resolve([{ id: 'm-1' }]);
+        }
+        return Promise.resolve([]);
+      });
+      const builder: Record<string, unknown> = {
+        execute: () => Promise.resolve(),
+      };
+      for (const step of ['delete', 'from', 'where']) {
+        builder[step] = () => builder;
+      }
+      const manager = {
+        query,
+        delete: jest.fn(),
+        createQueryBuilder: () => builder,
+      };
+      const transactional = {
+        transaction: (run: (m: unknown) => Promise<void>) => run(manager),
+      } as unknown as DataSource;
+
+      await makeService(0, null, 30, transactional).deleteAccount(5);
+
+      expect(
+        query.mock.calls.some(([sql]) =>
+          (sql as string).includes('UPDATE "user"'),
+        ),
+      ).toBe(false);
+    });
+
+    it('writes no tombstone when the deletion does not commit', async () => {
+      const transactional = {
+        transaction: () => Promise.reject(new Error('rolled back')),
+      } as unknown as DataSource;
+
+      await expect(
+        makeService(0, null, 30, transactional).deleteAccount(5),
+      ).rejects.toThrow('rolled back');
+      expect(cache.set).not.toHaveBeenCalled();
+    });
+  });
 
   describe('progress through today’s challenge', () => {
     // Answered before the challenge is started, so Home can render "Play" from

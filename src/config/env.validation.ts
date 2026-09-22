@@ -20,6 +20,20 @@ export const envValidationSchema = Joi.object({
   DATABASE_PASSWORD: Joi.string().allow('').default('cashortrash'),
   DATABASE_NAME: Joi.string().default('cashortrash'),
   DATABASE_SSL: Joi.boolean().default(false),
+  // Pool sizing and the two timeouts that keep a stuck database from taking
+  // every request down with it — see `databaseConfig`. 0 disables either
+  // timeout, which `pg` and Postgres both read as "no limit".
+  DATABASE_POOL_MAX: Joi.number().integer().min(1).max(200).default(10),
+  DATABASE_CONNECTION_TIMEOUT_MS: Joi.number()
+    .integer()
+    .min(0)
+    .max(120_000)
+    .default(5_000),
+  DATABASE_STATEMENT_TIMEOUT_MS: Joi.number()
+    .integer()
+    .min(0)
+    .max(3_600_000)
+    .default(15_000),
   // Schema changes are migrations in every environment. Refuse the old switch
   // explicitly so a stale deployment file cannot silently turn destructive
   // entity synchronization back on.
@@ -50,7 +64,7 @@ export const envValidationSchema = Joi.object({
     otherwise: Joi.string().allow('').optional(),
   }),
   OPENAI_MODEL: Joi.string().default('gpt-5.4'),
-  // Two minutes is generous for a batch of eight items and far short of the
+  // Two minutes is generous for a batch of four items and far short of the
   // SDK's ten-minute default, which is long enough to hold the copy pass's
   // advisory lock across a whole maintenance window. Capped at the default the
   // bound exists to replace.

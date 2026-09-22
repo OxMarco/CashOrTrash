@@ -58,14 +58,18 @@ export class AdminAuthService {
       );
     }
 
-    const within = await this.withinBudget(address);
+    // Reserved before the password is checked, not recorded after. Checking
+    // the count and charging it later left the whole scrypt verification in
+    // between: a burst of concurrent guesses all read the same count under
+    // the limit and were all verified, so the budget capped nothing against
+    // exactly the parallel run it exists to slow down.
+    const within = await this.reserveAttempt(address);
     const correct = await verifyAdminPassword(
       password,
       this.config.passwordHash,
     );
 
     if (!within || !correct) {
-      if (!correct) await this.recordFailure(address);
       this.logger.warn(
         `Rejected an admin login from ${address ?? 'an unknown address'}` +
           (within ? '' : ' (attempt budget exhausted)'),
@@ -89,23 +93,33 @@ export class AdminAuthService {
     return address ? `admin:login:${address}` : null;
   }
 
-  private async withinBudget(address: string | null): Promise<boolean> {
+  /**
+   * Charges one attempt to the address and says whether it was within budget.
+   *
+   * Every attempt is charged, right or wrong; a successful login then clears
+   * the counter, so only failures are left counting against the address. The
+   * increment and the expiry go in one `MULTI`, so there is no moment where
+   * the counter exists without a window — a crash between the two used to be
+   * able to leave a budget that never reset. `EXPIRE … NX` sets the window only
+   * on a key that has none, so a run of attempts cannot keep pushing it out and
+   * make the budget permanent, and a key left without a TTL by that older code
+   * gets one on its next attempt.
+   */
+  private async reserveAttempt(address: string | null): Promise<boolean> {
     const key = this.key(address);
     // No address to budget against — the proxy did not pass one. Falling open
     // is correct: the alternative refuses every login on a misconfigured proxy
     // and locks the operator out of their own portal.
     if (!key) return true;
-    const used = Number((await this.redis.get(key)) ?? 0);
-    return used < MAX_ATTEMPTS;
-  }
 
-  private async recordFailure(address: string | null): Promise<void> {
-    const key = this.key(address);
-    if (!key) return;
-    const used = await this.redis.incr(key);
-    // Only on the first failure, so a run of them cannot keep pushing the
-    // window out and make the budget permanent.
-    if (used === 1) await this.redis.expire(key, WINDOW_SECONDS);
+    const results = await this.redis
+      .multi()
+      .incr(key)
+      .expire(key, WINDOW_SECONDS, 'NX')
+      .exec();
+    const [error, used] = results?.[0] ?? [new Error('transaction aborted')];
+    if (error) throw error;
+    return Number(used) <= MAX_ATTEMPTS;
   }
 
   private async clearFailures(address: string | null): Promise<void> {

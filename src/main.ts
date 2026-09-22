@@ -10,7 +10,7 @@ import { Logger as PinoLogger } from 'nestjs-pino';
 import { attachRealtime, configureApp } from './app.bootstrap';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
-import { TRUST_PROXY_HOPS } from './config/proxy';
+import { trustProxy } from './config/proxy';
 import { createOpenApiDocument } from './openapi';
 
 async function bootstrap(): Promise<void> {
@@ -19,9 +19,10 @@ async function bootstrap(): Promise<void> {
     new FastifyAdapter({
       // Production has exactly one front-facing proxy (Traefik). Trusting every
       // hop lets a caller-supplied X-Forwarded-For become request.ip, which is
-      // also the throttler identity. A one-hop boundary selects the address
-      // Traefik observed and ignores any farther, caller-injected entries.
-      trustProxy: TRUST_PROXY_HOPS,
+      // also the throttler identity. A one-hop boundary, from a private peer
+      // only, selects the address Traefik observed and ignores any farther,
+      // caller-injected entries — see `trustProxy`.
+      trustProxy,
       bodyLimit: 256 * 1024,
     }),
     { bufferLogs: true },

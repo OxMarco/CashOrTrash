@@ -1,5 +1,6 @@
 import { Api } from './support/api-client';
 import { registerPlayer } from './support/players';
+import { waitFor } from './support/wait';
 import { createTestApp, resetGameplayState, TestApp } from './support/test-app';
 
 /**
@@ -262,6 +263,97 @@ describe('onboarding', () => {
       });
       expect(recreated.status).toBe(200);
       expect(recreated.body.isNewPlayer).toBe(true);
+    });
+
+    // A bet locks user → session → match. Deletion must take the opponent's
+    // session before the match it shares, or an opponent mid-bet (holding its
+    // session, waiting on the match) and the deletion (holding the match,
+    // waiting on that session) deadlock.
+    it('locks the shared sessions before the match, as a bet does', async () => {
+      const host = await registerPlayer(api, 'delete-lock-order-host');
+      const guest = await registerPlayer(api, 'delete-lock-order-guest');
+      const match = await host.api.post('/v1/matches', {
+        themeSlug: 'vintage-finds',
+      });
+      const inviteCode = match.body.inviteCode as string;
+      await guest.api.post('/v1/matches/join', { inviteCode });
+      await host.api.post('/v1/sessions', { mode: 'h2h', inviteCode });
+      const guestSession = await guest.api.post('/v1/sessions', {
+        mode: 'h2h',
+        inviteCode,
+      });
+
+      // Stand in for the guest's bet at the point it holds its session.
+      const bet = ctx.dataSource.createQueryRunner();
+      await bet.connect();
+      await bet.startTransaction();
+      let deletion: ReturnType<typeof host.api.del> | undefined;
+      try {
+        await bet.query(
+          'SELECT id FROM game_session WHERE id = $1 FOR UPDATE',
+          [guestSession.body.id],
+        );
+        deletion = host.api.del('/v1/me');
+
+        await waitFor(
+          async () => {
+            const [row] = await ctx.dataSource.query<
+              Array<{ waiting: number }>
+            >(
+              `SELECT COUNT(*)::int AS waiting FROM pg_stat_activity
+                WHERE datname = current_database() AND wait_event_type = 'Lock'
+                  AND query LIKE '%game_session%'`,
+            );
+            return row.waiting > 0;
+          },
+          { label: 'deletion waiting for the opponent session' },
+        );
+
+        // The bet's next step: the match. The deletion must not be holding it.
+        await expect(
+          bet.query('SELECT id FROM "match" WHERE id = $1 FOR UPDATE NOWAIT', [
+            match.body.id,
+          ]),
+        ).resolves.toHaveLength(1);
+        await bet.commitTransaction();
+
+        expect((await deletion).status).toBe(204);
+      } finally {
+        if (bet.isTransactionActive) await bet.rollbackTransaction();
+        await bet.release();
+        // Settle the request on failure too, or it outlives the suite.
+        await deletion?.catch(() => undefined);
+      }
+    });
+
+    it('survives a bet racing the deletion of its opponent', async () => {
+      const host = await registerPlayer(api, 'delete-race-host');
+      const guest = await registerPlayer(api, 'delete-race-guest');
+      const match = await host.api.post('/v1/matches', {
+        themeSlug: 'vintage-finds',
+      });
+      const inviteCode = match.body.inviteCode as string;
+      await guest.api.post('/v1/matches/join', { inviteCode });
+      await host.api.post('/v1/sessions', { mode: 'h2h', inviteCode });
+      const session = await guest.api.post('/v1/sessions', {
+        mode: 'h2h',
+        inviteCode,
+      });
+      const current = await guest.api.get(
+        `/v1/sessions/${session.body.id}/current`,
+      );
+
+      const [bet, deletion] = await Promise.all([
+        guest.api.post(`/v1/sessions/${session.body.id}/rounds/0/bet`, {
+          loCents: current.body.suggestedLoCents,
+          hiCents: current.body.suggestedHiCents,
+        }),
+        host.api.del('/v1/me'),
+      ]);
+
+      expect(deletion.status).toBe(204);
+      // Either order is legal; a deadlock surfaces as a 500 instead.
+      expect([200, 404]).toContain(bet.status);
     });
   });
 });
