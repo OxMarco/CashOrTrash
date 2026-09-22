@@ -21,13 +21,6 @@ a deployment pass; supply the real release inputs instead.
   RevenueCat dashboard, add a webhook to `https://<domain>/v1/webhooks/revenuecat`
   with that value as its Authorization header, send its test event, and confirm
   a 200. Then buy in sandbox and check `/v1/me` reports `billing.premium`.
-- [ ] Set `POSTGRES_PASSWORD` in the production `.env`. `docker-compose.prod.yml`
-  passes it to the postgres, app and db-backup services and refuses to start
-  without it. Postgres only reads it when the data volume is first created: on
-  a host whose volume already exists, either set it to the current password
-  (`cashortrash` for volumes created before it was configurable) or change the
-  password first with `make psql` → `ALTER USER cashortrash PASSWORD '…';`,
-  then update `.env` and recreate `app` and `db-backup`.
 - [ ] Set `APPLE_APP_ID` to the Apple Team ID plus the shipped bundle ID. Set
   `ANDROID_APP_PACKAGE` and the Play App Signing certificate's SHA-256
   fingerprint, not a local debug certificate.
