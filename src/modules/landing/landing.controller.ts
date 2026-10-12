@@ -29,15 +29,35 @@ import { AppConfig, LegalConfig, LinksConfig } from 'src/config/configuration';
  * root, while under `node dist/src/main.js` it is `dist/src/modules/landing`, four.
  * Tried in order, so the source layout wins where both could exist.
  */
-export const LANDING_ASSET_PATHS = [
-  join(__dirname, '..', '..', '..', 'assets', 'landing.html'),
-  join(__dirname, '..', '..', '..', '..', 'assets', 'landing.html'),
+const assetPaths = (name: string): string[] => [
+  join(__dirname, '..', '..', '..', 'assets', name),
+  join(__dirname, '..', '..', '..', '..', 'assets', name),
 ];
 
-/** Same two-candidate dance as the landing page, for the unfurl image. */
-export const OG_CARD_PATHS = [
-  join(__dirname, '..', '..', '..', 'assets', 'og-card.png'),
-  join(__dirname, '..', '..', '..', '..', 'assets', 'og-card.png'),
+export const LANDING_ASSET_PATHS = assetPaths('landing.html');
+
+/**
+ * The image files served off the bare origin, each through the same
+ * two-candidate lookup as the landing page. The icons are here because a
+ * browser asks for `/favicon.ico` on every page whether or not one is linked,
+ * and an iOS home-screen bookmark asks for `/apple-touch-icon.png`; without
+ * them every tab showed a blank icon.
+ */
+const STATIC_FILES = {
+  'og-card.png': 'image/png',
+  'favicon.ico': 'image/x-icon',
+  'apple-touch-icon.png': 'image/png',
+} as const;
+type StaticFile = keyof typeof STATIC_FILES;
+
+const APP_STORE_ID = '6805992515';
+export const APP_STORE_URL = `https://apps.apple.com/app/id${APP_STORE_ID}`;
+export const PLAY_STORE_URL =
+  'https://play.google.com/store/apps/details?id=fun.cashortrash.app';
+
+const ICON_TAGS = [
+  '<link rel="icon" href="/favicon.ico" sizes="48x48" />',
+  '<link rel="apple-touch-icon" href="/apple-touch-icon.png" />',
 ];
 
 const OG_TITLE = 'CashOrTrash: guess what stuff costs';
@@ -97,7 +117,10 @@ const escapeAttribute = (value: string): string =>
 export class LandingController {
   private readonly logger = new Logger(LandingController.name);
   private page: { html: Buffer; etag: string } | null = null;
-  private ogCardFile: { png: Buffer; etag: string } | null = null;
+  private readonly files = new Map<
+    StaticFile,
+    { body: Buffer; etag: string }
+  >();
 
   constructor(private readonly config: ConfigService) {}
 
@@ -223,7 +246,7 @@ export class LandingController {
       'Open match invite',
       `<p>This invite opens in the CashOrTrash app.</p>
        <p><a href="cashortrash://match/${encodeURIComponent(inviteCode)}">Open CashOrTrash</a></p>
-       <p>If the app is not installed yet, visit <a href="/support">Support</a> for launch and installation help.</p>`,
+       <p>Don't have it yet? Get it on the <a href="${APP_STORE_URL}">App Store</a> or <a href="${PLAY_STORE_URL}">Google Play</a>.</p>`,
     );
   }
 
@@ -236,48 +259,68 @@ export class LandingController {
    * correct for an image nothing embeds a script into.
    */
   @Get('og-card.png')
-  async ogCard(
-    @Req() request: FastifyRequest,
-    @Res() reply: FastifyReply,
-  ): Promise<void> {
-    const card = await this.loadOgCard();
-    if (!card) throw new NotFoundException();
+  ogCard(@Req() request: FastifyRequest, @Res() reply: FastifyReply) {
+    return this.sendFile('og-card.png', request, reply);
+  }
 
-    if (request.headers['if-none-match'] === card.etag) {
+  @Get('favicon.ico')
+  favicon(@Req() request: FastifyRequest, @Res() reply: FastifyReply) {
+    return this.sendFile('favicon.ico', request, reply);
+  }
+
+  @Get('apple-touch-icon.png')
+  appleTouchIcon(@Req() request: FastifyRequest, @Res() reply: FastifyReply) {
+    return this.sendFile('apple-touch-icon.png', request, reply);
+  }
+
+  private async sendFile(
+    name: StaticFile,
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void> {
+    const file = await this.loadFile(name);
+    if (!file) throw new NotFoundException();
+
+    if (request.headers['if-none-match'] === file.etag) {
       void reply
         .status(304)
-        .header('ETag', card.etag)
+        .header('ETag', file.etag)
         .header('Cache-Control', 'public, max-age=86400')
         .send();
       return;
     }
 
     void reply
-      .header('Content-Type', 'image/png')
-      .header('Content-Length', card.png.byteLength)
+      .header('Content-Type', STATIC_FILES[name])
+      .header('Content-Length', file.body.byteLength)
       .header('Cache-Control', 'public, max-age=86400')
-      .header('ETag', card.etag)
+      .header('ETag', file.etag)
       .header('X-Content-Type-Options', 'nosniff')
-      .send(card.png);
+      .send(file.body);
   }
 
-  private async loadOgCard(): Promise<{ png: Buffer; etag: string } | null> {
-    if (this.ogCardFile) return this.ogCardFile;
-    for (const path of OG_CARD_PATHS) {
-      let png: Buffer;
+  private async loadFile(
+    name: StaticFile,
+  ): Promise<{ body: Buffer; etag: string } | null> {
+    const cached = this.files.get(name);
+    if (cached) return cached;
+    const paths = assetPaths(name);
+    for (const path of paths) {
+      let body: Buffer;
       try {
-        png = await readFile(path);
+        body = await readFile(path);
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
         throw error;
       }
 
-      const etag = `"${createHash('sha256').update(png).digest('hex')}"`;
-      this.ogCardFile = { png, etag };
-      return this.ogCardFile;
+      const etag = `"${createHash('sha256').update(body).digest('hex')}"`;
+      const file = { body, etag };
+      this.files.set(name, file);
+      return file;
     }
     this.logger.error(
-      `Could not read assets/og-card.png from any of: ${OG_CARD_PATHS.join(', ')}`,
+      `Could not read assets/${name} from any of: ${paths.join(', ')}`,
     );
     return null;
   }
@@ -349,6 +392,9 @@ export class LandingController {
       '<meta property="og:site_name" content="CashOrTrash" />',
       `<meta property="og:title" content="${escapeAttribute(OG_TITLE)}" />`,
       `<meta property="og:description" content="${escapeAttribute(OG_DESCRIPTION)}" />`,
+      // Safari's Smart App Banner: an "Open"/"Get" bar for iPhone visitors.
+      `<meta name="apple-itunes-app" content="app-id=${APP_STORE_ID}" />`,
+      ...ICON_TAGS,
       ...(origin
         ? [
             `<meta property="og:url" content="${escapeAttribute(origin)}" />`,
@@ -376,14 +422,14 @@ export class LandingController {
   }
 
   private sendDocument(reply: FastifyReply, title: string, body: string): void {
-    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · CashOrTrash</title><style>body{margin:0;background:#f5ead8;color:#201e1d;font:17px/1.6 system-ui,sans-serif}main{max-width:760px;margin:auto;padding:48px 24px 80px}h1,h2{line-height:1.15}h1{font-size:clamp(2rem,7vw,3.5rem)}h2{margin-top:2rem}a{color:#8a461f}nav{margin-bottom:2rem}</style></head><body><main><nav><a href="/">CashOrTrash</a></nav><h1>${title}</h1>${body}</main></body></html>`;
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · CashOrTrash</title>${ICON_TAGS.join('')}<style>body{margin:0;background:#f5ead8;color:#201e1d;font:17px/1.6 system-ui,sans-serif}main{max-width:760px;margin:auto;padding:48px 24px 80px}h1,h2{line-height:1.15}h1{font-size:clamp(2rem,7vw,3.5rem)}h2{margin-top:2rem}a{color:#8a461f}nav{margin-bottom:2rem}</style></head><body><main><nav><a href="/">CashOrTrash</a></nav><h1>${title}</h1>${body}</main></body></html>`;
     void reply
       .header('Content-Type', 'text/html; charset=utf-8')
       .header('Cache-Control', 'public, max-age=300')
       .header('X-Content-Type-Options', 'nosniff')
       .header(
         'Content-Security-Policy',
-        "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'",
       )
       .send(html);
   }

@@ -52,6 +52,10 @@ export const UNPREFIXED_ROUTES = [
   // fetched the root path and got a 404 — a share with no picture, and nothing
   // in the logs to say why.
   'og-card.png',
+  // Asked for by every browser tab and iOS home-screen bookmark at the root,
+  // linked or not.
+  'favicon.ico',
+  'apple-touch-icon.png',
 ];
 
 /**

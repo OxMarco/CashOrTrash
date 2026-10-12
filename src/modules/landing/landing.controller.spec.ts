@@ -8,7 +8,12 @@ import { ConfigModule } from '@nestjs/config';
 import { readFile } from 'node:fs/promises';
 
 import { UNPREFIXED_ROUTES } from 'src/app.bootstrap';
-import { LandingController, LANDING_ASSET_PATHS } from './landing.controller';
+import {
+  APP_STORE_URL,
+  LandingController,
+  LANDING_ASSET_PATHS,
+  PLAY_STORE_URL,
+} from './landing.controller';
 import { appConfig, legalConfig, linksConfig } from 'src/config/configuration';
 
 /**
@@ -94,6 +99,40 @@ describe('the landing page', () => {
     expect(match.statusCode).toBe(200);
     expect(match.body).toContain('cashortrash://match/K7PXQ2');
   });
+
+  it('sends a visitor without the app to both stores', async () => {
+    const [landing, match] = await Promise.all([
+      app.inject({ method: 'GET', url: '/' }),
+      app.inject({ method: 'GET', url: '/match/K7PXQ2' }),
+    ]);
+    for (const response of [landing, match]) {
+      expect(response.body).toContain(`href="${APP_STORE_URL}"`);
+      expect(response.body).toContain(`href="${PLAY_STORE_URL}"`);
+    }
+  });
+
+  // Browsers request /favicon.ico at the root whether or not a page links it,
+  // so a prefixed or missing route is a blank tab icon on every page.
+  it.each([
+    ['/favicon.ico', 'image/x-icon'],
+    ['/apple-touch-icon.png', 'image/png'],
+  ])('serves %s unprefixed', async (url, type) => {
+    const response = await app.inject({ method: 'GET', url });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toBe(type);
+    expect(response.rawPayload.byteLength).toBeGreaterThan(0);
+  });
+
+  it.each(['/', '/privacy', '/match/K7PXQ2'])(
+    'links the icons from %s',
+    async (url) => {
+      const response = await app.inject({ method: 'GET', url });
+      expect(response.body).toContain('<link rel="icon" href="/favicon.ico"');
+      expect(response.body).toContain(
+        '<link rel="apple-touch-icon" href="/apple-touch-icon.png"',
+      );
+    },
+  );
 
   // Until the app is in the stores there is nothing to associate with. A
   // placeholder file would be worse than none: both platforms cache a bad
