@@ -164,17 +164,19 @@ export class LandingController {
       reply,
       'Privacy policy',
       `
-        <p>Last updated: 25 September 2026</p>
+        <p>Last updated: 12 October 2026</p>
         <p>CashOrTrash creates an anonymous player account for each installation. We process a random device identifier, your chosen handle and avatar seed, scores, streaks, game sessions, match and friend relationships, and notification tokens only when you opt in to notifications.</p>
         <p>At registration we retain the originating IP address for up to ${app.registrationIpRetentionDays} days to prevent account farming and abuse. Server access and security logs may also contain IP addresses for a limited operational retention period.</p>
+        <h2>Ad measurement</h2>
+        <p>We advertise the app on Facebook and Instagram. To see which ads work, the app uses Meta's SDK to tell Meta (Meta Platforms Ireland Ltd. / Meta Platforms, Inc.) that it was installed, opened, and that onboarding was finished, along with basic device information such as the model, operating system, app version, and IP address. This starts only after you have finished onboarding. The app does not collect your device's advertising identifier (IDFA or Android advertising ID), never asks for permission to track you, and never sends Meta your handle, account, or purchase identifiers. On iOS, attribution of installs to ads uses Apple's SKAdNetwork, which reports to Meta without identifying you. Meta processes this data under its own <a href="https://www.facebook.com/privacy/policy/">privacy policy</a>.</p>
         <h2>Analytics and tracking</h2>
-        <p>The app contains no analytics, crash-reporting, or advertising SDKs, and it does not track you across other companies' apps or websites.</p>
+        <p>The app contains no analytics, crash-reporting, or in-app advertising SDKs, and it does not track you across other companies' apps or websites.</p>
         <h2>Purchases</h2>
         <p>Premium is sold through the App Store or Google Play, which handle payment; we never see your card or billing details. We use RevenueCat to confirm purchases: it receives a random purchase identifier for your account (not your handle or device identifier) and the store's record of what was bought, renewed, cancelled, or refunded. We store only whether premium is active and until when.</p>
         <h2>Why we use the data</h2>
         <p>We use it to run the game, maintain leaderboards and matches, prevent abuse, deliver requested notifications, and diagnose failures.</p>
         <h2>Retention and deletion</h2>
-        <p>Gameplay remains while your account exists. Deleting the account is self-service: open Profile, choose <strong>Delete account</strong>, and confirm. Deletion removes the handle, account credential, scores, games, friendships, matches, and notification tokens, and asks RevenueCat to erase its purchase record for the account. The App Store or Google Play keeps its own record of the transaction under its own policy. Short-lived cache and backup copies expire under the service retention schedule and are not restored into the live service.</p>
+        <p>Gameplay remains while your account exists. Deleting the account is self-service: open Profile, choose <strong>Delete account</strong>, and confirm. Deletion removes the handle, account credential, scores, games, friendships, matches, and notification tokens, and asks RevenueCat to erase its purchase record for the account. Ad-measurement events sent to Meta are not linked to your account, so we cannot identify or delete them; Meta keeps them under its own policy. The App Store or Google Play keeps its own record of the transaction under its own policy. Short-lived cache and backup copies expire under the service retention schedule and are not restored into the live service.</p>
         <h2>Your choices</h2>
         <p>You may delete the account yourself from Profile at any time. For access, correction, or privacy questions, email <a href="mailto:${email}">${email}</a>.</p>
       `,
