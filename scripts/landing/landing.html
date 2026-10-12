@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>CashOrTrash: guess what stuff costs</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  @font-face { font-family: 'Caprasimo'; src: url(%%FONT:caprasimo%%) format('truetype'); font-weight: 400; font-display: block; }
+  @font-face { font-family: 'Figtree'; src: url(%%FONT:figtree-400%%) format('truetype'); font-weight: 400; font-display: block; }
+  @font-face { font-family: 'Figtree'; src: url(%%FONT:figtree-600%%) format('truetype'); font-weight: 600; font-display: block; }
+  @font-face { font-family: 'Figtree'; src: url(%%FONT:figtree-700%%) format('truetype'); font-weight: 700; font-display: block; }
+  @font-face { font-family: 'Space Grotesk'; src: url(%%FONT:space-grotesk-700%%) format('truetype'); font-weight: 700; font-display: block; }
+
+  :root {
+    --bg: #F5EAD8;
+    --surface: #F9F4ED;
+    --text: #201E1D;
+    --muted: #645C50;
+    --border: #DCD3C4;
+    --rule: #E6DCCB;
+    --accent: #C67139;
+    --accent-strong: #B2622D;
+    --accent-tint: #FFE1D0;
+    --accent-tint-2: #FFD2B8;
+    --accent-deep: #643312;
+    --sage: #7A8A5E;
+    --sage-tint: #E1EECC;
+    --sage-deep: #3D472B;
+    --error: #B3372B;
+    --error-tint: #F6DDD3;
+    --track: #EEE7DB;
+    --ink: #201E1D;
+    --ink-text: #F5EAD8;
+    --ink-muted: #B6AB99;
+    --ink-surface: #302C28;
+    --ink-accent: #E08D55;
+    --ink-border: #5A534B;
+    --shadow: 0 2px 4px rgb(32 30 29 / 0.06), 0 16px 40px rgb(32 30 29 / 0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --bg: #1B1917;
+      --surface: #262320;
+      --text: #F5EAD8;
+      --muted: #B6AB99;
+      --border: #3D3833;
+      --rule: #302C28;
+      --accent: #E08D55;
+      --accent-strong: #F6A06B;
+      --accent-tint: #3D2415;
+      --accent-tint-2: #553119;
+      --accent-deep: #FFC6A5;
+      --sage: #8FA073;
+      --sage-tint: #29301D;
+      --sage-deep: #CCDBB2;
+      --error: #FF9A8A;
+      --error-tint: #3A211B;
+      --track: #302C28;
+      --ink: #F5EAD8;
+      --ink-text: #201E1D;
+      --ink-muted: #645C50;
+      --ink-surface: #E8DCC8;
+      --ink-accent: #B2622D;
+      --ink-border: #CFC5B3;
+      --shadow: 0 2px 4px rgb(0 0 0 / 0.3), 0 16px 40px rgb(0 0 0 / 0.4);
+    }
+  }
+  :root[data-theme='dark'] {
+    --bg: #1B1917;
+    --surface: #262320;
+    --text: #F5EAD8;
+    --muted: #B6AB99;
+    --border: #3D3833;
+    --rule: #302C28;
+    --accent: #E08D55;
+    --accent-strong: #F6A06B;
+    --accent-tint: #3D2415;
+    --accent-tint-2: #553119;
+    --accent-deep: #FFC6A5;
+    --sage: #8FA073;
+    --sage-tint: #29301D;
+    --sage-deep: #CCDBB2;
+    --error: #FF9A8A;
+    --error-tint: #3A211B;
+    --track: #302C28;
+    --ink: #F5EAD8;
+    --ink-text: #201E1D;
+    --ink-muted: #645C50;
+    --ink-surface: #E8DCC8;
+    --ink-accent: #B2622D;
+    --ink-border: #CFC5B3;
+    --shadow: 0 2px 4px rgb(0 0 0 / 0.3), 0 16px 40px rgb(0 0 0 / 0.4);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    overflow-x: clip;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Figtree', system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.55;
+  }
+  h1, h2, h3 { font-family: 'Caprasimo', 'Figtree', serif; font-weight: 400; margin: 0; text-wrap: balance; }
+  p { margin: 0; }
+  a { color: inherit; }
+  button { font: inherit; color: inherit; }
+  ul { margin: 0; padding: 0; list-style: none; }
+
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 32px; }
+  .num { font-family: 'Space Grotesk', monospace; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .eyebrow {
+    font-size: 0.78rem; font-weight: 700;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--accent-strong);
+  }
+  .section { padding: 72px 0; border-top: 1px solid var(--rule); }
+  .section h2 { font-size: clamp(1.9rem, 3.6vw, 2.5rem); line-height: 1.1; max-width: 18em; margin-top: 10px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 24px;
+  }
+  .card h3 { font-size: 1.35rem; line-height: 1.2; }
+  .card p { color: var(--muted); font-size: 1rem; }
+
+  /* photos: each image is inlined once, here, and referenced by class */
+  .ph { display: block; background-size: cover; background-position: center; background-color: #FFFFFF; }
+  .ph-car { background-image: url(%%PHOTO:car%%); }
+  .ph-wine { background-image: url(%%PHOTO:wine%%); }
+  .ph-card { background-image: url(%%PHOTO:card%%); }
+  .ph-yacht { background-image: url(%%PHOTO:yacht%%); }
+  .ph-ipad { background-image: url(%%PHOTO:ipad%%); }
+  .tag { display: inline-block; background: url(%%PHOTO:logo%%) center / contain no-repeat; transform: rotate(-6deg); }
+
+  /* ---------- nav ---------- */
+  .nav {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 22px 0 10px;
+  }
+  .wordmark {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: 'Caprasimo', serif;
+    font-size: 1.35rem;
+    letter-spacing: 0.01em;
+    text-decoration: none;
+  }
+  .wordmark .tag { width: 34px; height: 34px; }
+  .wordmark em { font-style: normal; color: var(--accent); }
+  .nav-links { display: flex; gap: 28px; font-weight: 600; font-size: 0.9rem; color: var(--muted); }
+  .nav-links a { text-decoration: none; }
+  .nav-links a:hover { color: var(--text); }
+  .nav-cta {
+    font-weight: 700; font-size: 0.9rem;
+    text-decoration: none;
+    padding: 10px 18px;
+    border-radius: 999px;
+    background: var(--text); color: var(--bg);
+    white-space: nowrap;
+  }
+  .nav-cta:hover { background: var(--accent-strong); color: #FFF2EB; }
+
+  /* ---------- hero ---------- */
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: 56px;
+    align-items: center;
+    padding: 48px 0 80px;
+  }
+  .hero h1 {
+    font-size: clamp(2.4rem, 5.2vw, 3.7rem);
+    line-height: 1.06;
+  }
+  .hero h1 .really { color: var(--accent); white-space: nowrap; }
+  .hero .eyebrow { margin-bottom: 14px; }
+  .hero-sub {
+    margin-top: 22px;
+    font-size: 1.12rem;
+    color: var(--muted);
+    max-width: 30em;
+  }
+  .hero-sub strong { color: var(--text); font-weight: 600; }
+  .ctas { margin-top: 32px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .store-btn {
+    display: inline-flex; align-items: center; gap: 9px;
+    text-decoration: none;
+    font-weight: 700; font-size: 0.98rem;
+    padding: 14px 24px; min-height: 44px;
+    border-radius: 999px;
+    background: var(--text); color: var(--bg);
+  }
+  .store-btn.alt {
+    background: transparent; color: var(--text);
+    border: 1.5px solid var(--border);
+  }
+  .store-btn:hover { background: var(--accent-strong); color: #FFF2EB; border-color: transparent; }
+  .store-btn svg { width: 18px; height: 18px; flex: none; }
+  .hero-note { margin-top: 16px; font-size: 0.86rem; color: var(--muted); }
+
+  /* ---------- game card ---------- */
+  .game-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 28px;
+    padding: 24px 26px 24px;
+    box-shadow: var(--shadow);
+  }
+  .game-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .game-mult {
+    font-size: 1.05rem;
+    color: var(--accent-deep);
+    background: var(--accent-tint);
+    border-radius: 999px;
+    padding: 3px 12px;
+  }
+  .timer {
+    margin-top: 12px;
+    height: 4px; border-radius: 999px;
+    background: var(--track);
+    overflow: hidden;
+  }
+  .timer-fill { height: 100%; width: 100%; border-radius: 999px; background: var(--accent); }
+  .timer-fill.low { background: var(--error); }
+
+  .item-photo { width: 100%; height: 210px; border-radius: 18px; margin-top: 18px; }
+  .item-name { font-weight: 700; font-size: 1.08rem; line-height: 1.3; margin-top: 14px; }
+  .item-hint { color: var(--muted); font-size: 0.9rem; margin-top: 2px; }
+
+  .readout {
+    margin-top: 18px;
+    text-align: center;
+    font-size: clamp(1.35rem, 3vw, 1.8rem);
+    letter-spacing: -0.01em;
+  }
+  .readout .dash { color: var(--muted); padding: 0 0.15em; }
+
+  .slider { position: relative; margin: 16px 6px 6px; height: 44px; touch-action: none; }
+  .slider-track {
+    position: absolute; top: 50%; left: 0; right: 0;
+    height: 8px; transform: translateY(-50%);
+    border-radius: 999px; background: var(--track);
+  }
+  .slider-range {
+    position: absolute; top: 50%; height: 8px; transform: translateY(-50%);
+    border-radius: 999px; background: var(--accent);
+  }
+  .thumb {
+    position: absolute; top: 50%;
+    width: 28px; height: 28px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: var(--surface);
+    border: 3px solid var(--accent);
+    box-shadow: 0 1px 4px rgb(32 30 29 / 0.25);
+    cursor: grab; padding: 0;
+  }
+  .thumb:active { cursor: grabbing; }
+  .thumb:focus-visible, .lock:focus-visible, .store-btn:focus-visible, .nav-cta:focus-visible, .next:focus-visible, .nav-links a:focus-visible, .foot a:focus-visible {
+    outline: 3px solid var(--accent); outline-offset: 2px;
+  }
+  .price-pin {
+    position: absolute; top: -6px;
+    transform: translateX(-50%);
+    display: none;
+    flex-direction: column; align-items: center; gap: 2px;
+    pointer-events: none;
+  }
+  .price-pin .pin-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--text); border: 3px solid var(--surface); box-shadow: 0 1px 3px rgb(0 0 0 / 0.3); margin-top: 19px; }
+  .slider.revealed .price-pin { display: flex; }
+
+  .bounds { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; padding: 0 2px; }
+
+  .lock {
+    margin-top: 16px; width: 100%;
+    font-family: 'Caprasimo', serif; font-size: 1.15rem;
+    padding: 14px;
+    border: 0; border-radius: 999px;
+    background: var(--accent); color: #FFF2EB;
+    cursor: pointer;
+  }
+  .lock:hover { background: var(--accent-strong); }
+  .lock:disabled { opacity: 0.5; cursor: default; }
+
+  .verdict { margin-top: 16px; display: none; text-align: center; border-radius: 20px; padding: 18px 16px 20px; }
+  .verdict.show { display: block; }
+  .verdict.cash { background: var(--sage-tint); color: var(--sage-deep); }
+  .verdict.trash { background: var(--error-tint); color: var(--error); }
+  .verdict-word { font-family: 'Caprasimo', serif; font-size: 1.7rem; line-height: 1.1; }
+  .verdict-detail { font-size: 0.92rem; margin-top: 6px; font-weight: 600; }
+  .next {
+    margin-top: 12px;
+    font-weight: 700; font-size: 0.92rem;
+    background: none; border: 1.5px solid currentcolor; border-radius: 999px;
+    padding: 8px 18px; cursor: pointer;
+  }
+
+  /* ---------- how it works ---------- */
+  .g3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-top: 40px; }
+  .step { display: flex; flex-direction: column; gap: 14px; }
+  .step-n {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--text); color: var(--bg);
+    display: grid; place-items: center;
+    font-size: 1rem;
+  }
+  .step-art { min-height: 64px; margin-top: 4px; }
+  .step-item { display: flex; align-items: center; gap: 12px; }
+  .step-item .ph { width: 64px; height: 64px; border-radius: 16px; flex: none; }
+  .step-item b { display: block; line-height: 1.3; }
+  .step-item small { color: var(--muted); font-size: 0.85rem; }
+  .mini { position: relative; height: 64px; }
+  .mini .t { position: absolute; top: 28px; left: 0; right: 0; height: 8px; border-radius: 999px; background: var(--track); }
+  .mini .r { position: absolute; top: 28px; left: 30%; width: 32%; height: 8px; border-radius: 999px; background: var(--accent); }
+  .mini .k { position: absolute; top: 18px; width: 28px; height: 28px; border-radius: 50%; background: var(--surface); border: 3px solid var(--accent); }
+  .mini .v { position: absolute; top: 0; left: 46%; transform: translateX(-50%); font-size: 0.9rem; white-space: nowrap; }
+  .chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .chip { border-radius: 999px; padding: 4px 12px; font-size: 0.9rem; color: var(--accent-deep); background: var(--accent-tint); }
+  .chip.mid { font-size: 1.02rem; padding: 5px 14px; background: var(--accent-tint-2); }
+  .chip.hot { font-size: 1.2rem; padding: 6px 16px; background: var(--accent); color: #FFF2EB; }
+
+  /* ---------- modes ---------- */
+  .mode { display: flex; flex-direction: column; gap: 12px; padding: 26px; }
+  .mode h3 { font-size: 1.5rem; line-height: 1.15; }
+  .mode .eyebrow { font-size: 0.72rem; letter-spacing: 0.11em; }
+  .mode.ink { background: var(--ink); color: var(--ink-text); border-color: transparent; }
+  .mode.ink .eyebrow { color: var(--ink-accent); }
+  .mode.ink p { color: var(--ink-muted); }
+  .five { display: flex; gap: 6px; margin-top: 8px; }
+  .five .ph { width: 20%; aspect-ratio: 1; border-radius: 10px; border: 2px solid var(--sage); }
+  .five .ph.miss { border-color: var(--error); }
+  .share-text { margin-top: 6px; background: var(--ink-surface); color: var(--ink-text); border-radius: 14px; padding: 12px 14px; font-size: 0.88rem; line-height: 1.45; }
+  .mode-foot { margin-top: auto; padding-top: 12px; }
+  .clock { display: flex; align-items: center; gap: 10px; }
+  .clock .bar { flex: 1; height: 6px; border-radius: 999px; background: var(--track); overflow: hidden; }
+  .clock .bar i { display: block; width: 38%; height: 100%; background: var(--error); }
+  .clock .num { color: var(--error); }
+  .board { display: flex; flex-direction: column; gap: 8px; font-size: 0.92rem; }
+  .board div { display: flex; justify-content: space-between; align-items: center; border-radius: 12px; padding: 8px 12px; background: var(--track); }
+  .board div:first-child { background: var(--sage-tint); color: var(--sage-deep); }
+  .board span:first-child { font-weight: 600; }
+
+  /* ---------- categories ---------- */
+  .g4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 36px; }
+  .cat {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 999px; padding: 8px 16px 8px 8px;
+    font-weight: 600;
+  }
+  .cat .ph, .cat .ico { width: 44px; height: 44px; border-radius: 50%; flex: none; }
+  .cat .ico { display: grid; place-items: center; background: var(--accent-tint); color: var(--accent-deep); }
+  .cat .ico.sage { background: var(--sage-tint); color: var(--sage-deep); }
+  .cat .ico svg { width: 22px; height: 22px; }
+
+  /* ---------- free & premium ---------- */
+  .g2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 40px; }
+  .plan { display: flex; flex-direction: column; gap: 14px; padding: 28px; }
+  .plan h3 { font-size: 1.65rem; }
+  .plan .price { font-size: 2rem; line-height: 1.1; }
+  .plan .price small { font-family: 'Figtree', sans-serif; font-weight: 600; font-size: 1rem; color: var(--muted); }
+  .plan .fine { margin-top: -6px; font-size: 0.88rem; }
+  .plan ul { margin-top: 6px; display: flex; flex-direction: column; gap: 10px; font-size: 1rem; }
+  .plan li { display: flex; gap: 10px; align-items: flex-start; }
+  .plan li::before { content: '\2713'; font-weight: 700; color: var(--sage); }
+  .plan.premium { background: var(--accent-tint); border-color: var(--accent-tint-2); color: var(--accent-deep); }
+  .plan.premium p, .plan.premium .price small { color: var(--accent-deep); opacity: 0.85; }
+  .plan.premium li::before { color: var(--accent-strong); }
+
+  /* ---------- closing ---------- */
+  .closing { padding: 24px 0 80px; }
+  .closing-box {
+    background: var(--ink); color: var(--ink-text);
+    border-radius: 32px; padding: 56px 40px;
+    text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 18px;
+  }
+  .closing-box .tag { width: 72px; height: 72px; }
+  .closing-box h2 { font-size: clamp(2rem, 4vw, 2.75rem); line-height: 1.08; max-width: 14em; }
+  .closing-box p { color: var(--ink-muted); font-size: 1.1rem; max-width: 30em; }
+  .closing-box .ctas { margin-top: 10px; justify-content: center; }
+  .closing-box .store-btn { background: var(--ink-text); color: var(--ink); }
+  .closing-box .store-btn.alt { background: transparent; color: var(--ink-text); border-color: var(--ink-border); }
+  .closing-box .store-btn:hover { background: var(--accent-strong); color: #FFF2EB; border-color: transparent; }
+
+  /* ---------- footer ---------- */
+  .foot {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    padding-bottom: 40px; font-size: 0.86rem; color: var(--muted);
+  }
+  .foot .wordmark { font-size: 1.1rem; color: var(--text); }
+  .foot nav { display: flex; gap: 20px; font-weight: 600; }
+  .foot nav a { text-decoration: none; }
+  .foot nav a:hover { color: var(--text); }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; gap: 40px; padding: 36px 0 56px; }
+    .hero-sub { font-size: 1.02rem; }
+    .g3, .g2 { grid-template-columns: 1fr; }
+    .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .nav-links { display: none; }
+    .section { padding: 56px 0; }
+  }
+  @media (max-width: 480px) {
+    .wrap { padding: 0 16px; }
+    .nav { padding-top: 16px; }
+    .hero { gap: 32px; padding-top: 28px; }
+    .ctas { flex-direction: column; align-items: stretch; }
+    .store-btn { justify-content: center; }
+    .game-card { padding: 20px 16px 18px; border-radius: 22px; }
+    .item-photo { height: 170px; }
+    .item-name { font-size: 1rem; }
+    .verdict-word { font-size: 1.45rem; }
+    .g4 { grid-template-columns: 1fr; }
+    .closing-box { padding: 40px 20px; border-radius: 24px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+    .slider-range, .thumb { transition: none; }
+    .store-btn, .nav-cta, .lock { transition: background-color 0.15s ease, color 0.15s ease; }
+  }
+</style>
+</head>
+<body>
+
+<header class="wrap nav">
+  <a class="wordmark" href="/"><span class="tag" aria-hidden="true"></span><span>Cash<em>Or</em>Trash</span></a>
+  <nav class="nav-links" aria-label="Sections">
+    <a href="#how">How it works</a>
+    <a href="#modes">Ways to play</a>
+    <a href="#premium">Free &amp; Premium</a>
+  </nav>
+  <a class="nav-cta" href="#get-the-app">Get the app</a>
+</header>
+
+<main>
+  <section class="wrap hero">
+    <div>
+      <p class="eyebrow">Free price-guessing game · iPhone and Android</p>
+      <h1>How much is that, <span class="really">really?</span></h1>
+      <p class="hero-sub">You don't type a number, you <strong>bet a range</strong>. Tighter range, bigger multiplier. Miss and you get nothing</p>
+      <div class="ctas">
+        <a class="store-btn" href="https://apps.apple.com/app/id6805992515"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.37 12.6c-.02-2.3 1.88-3.4 1.97-3.46-1.07-1.57-2.74-1.78-3.33-1.8-1.42-.14-2.77.83-3.49.83-.72 0-1.83-.81-3.01-.79-1.55.02-2.98.9-3.78 2.29-1.61 2.8-.41 6.94 1.16 9.21.77 1.11 1.68 2.36 2.88 2.31 1.16-.05 1.59-.75 2.99-.75 1.4 0 1.79.75 3.01.72 1.24-.02 2.03-1.13 2.79-2.25.88-1.29 1.24-2.53 1.26-2.6-.03-.01-2.42-.93-2.45-3.71zM14.08 5.85c.64-.77 1.07-1.85.95-2.92-.92.04-2.03.61-2.69 1.38-.59.68-1.11 1.78-.97 2.83 1.03.08 2.07-.52 2.71-1.29z"/></svg>Download on the App Store</a>
+        <a class="store-btn alt" href="https://play.google.com/store/apps/details?id=fun.cashortrash.app"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4.2 2.4c-.25.26-.4.67-.4 1.2v16.8c0 .53.15.94.4 1.2l.06.05L13.7 12.2v-.22L4.26 2.35l-.06.05zM16.85 15.35l-3.15-3.15v-.22l3.15-3.15.07.04 3.73 2.12c1.07.6 1.07 1.6 0 2.2l-3.73 2.12-.07.04zM16.92 15.31L13.7 12.1l-9.5 9.5c.35.37.93.42 1.58.05l11.14-6.34zM16.92 8.89L5.78 2.55c-.65-.37-1.23-.32-1.58.05l9.5 9.5 3.22-3.21z"/></svg>Get it on Google Play</a>
+      </div>
+      <p class="hero-note">Free to play · No signup · No ads, no tracking · English, Español, Português, Italiano</p>
+    </div>
+
+    <div class="game-card" id="demo">
+      <div class="game-head">
+        <span class="eyebrow" id="round-label">Try a round</span>
+        <span class="game-mult num" id="mult" aria-live="polite">×1.8</span>
+      </div>
+      <div class="timer" aria-hidden="true"><div class="timer-fill" id="timer-fill"></div></div>
+
+      <span class="ph item-photo" id="item-photo" role="img"></span>
+      <div class="item-name" id="item-name"></div>
+      <div class="item-hint" id="item-hint"></div>
+
+      <div class="readout num" aria-live="polite"><span id="lo-val">$0</span><span class="dash">–</span><span id="hi-val">$0</span></div>
+
+      <div class="slider" id="slider">
+        <div class="slider-track"></div>
+        <div class="slider-range" id="range"></div>
+        <div class="price-pin" id="price-pin"><div class="pin-dot"></div></div>
+        <button class="thumb" id="thumb-lo" role="slider" aria-label="Lowest price in your range" tabindex="0"></button>
+        <button class="thumb" id="thumb-hi" role="slider" aria-label="Highest price in your range" tabindex="0"></button>
+      </div>
+      <div class="bounds"><span id="bound-min"></span><span id="bound-max"></span></div>
+
+      <button class="lock" id="lock">Lock it in</button>
+
+      <div class="verdict" id="verdict" role="status">
+        <div class="verdict-word" id="verdict-word"></div>
+        <div class="verdict-detail" id="verdict-detail"></div>
+        <button class="next" id="next">Next item</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap section" id="how">
+    <p class="eyebrow">How it works</p>
+    <h2>Ten seconds, two handles, one price</h2>
+    <div class="g3">
+      <div class="card step">
+        <span class="step-n num">1</span>
+        <div class="step-art step-item">
+          <span class="ph ph-wine" role="img" aria-label="A bottle of Château Lafite-Rothschild 2015"></span>
+          <div><b>Château Lafite-Rothschild 2015</b><small>A bottle, in a good year</small></div>
+        </div>
+        <h3>See the item</h3>
+        <p>A photo, a line about it, a real listing price</p>
+      </div>
+      <div class="card step">
+        <span class="step-n num">2</span>
+        <div class="step-art mini" aria-hidden="true">
+          <div class="t"></div><div class="r"></div>
+          <div class="k" style="left: calc(30% - 14px)"></div>
+          <div class="k" style="left: calc(62% - 14px)"></div>
+          <div class="v num">$900 – $1,600</div>
+        </div>
+        <h3>Bet a range</h3>
+        <p>Drag the handles. Wide is safe, narrow pays more. Ten seconds</p>
+      </div>
+      <div class="card step">
+        <span class="step-n num">3</span>
+        <div class="step-art chips" aria-hidden="true">
+          <span class="chip num">wide ×1.2</span>
+          <span class="chip mid num">×2.5</span>
+          <span class="chip hot num">tight ×6.0</span>
+        </div>
+        <h3>Tighter range, bigger multiplier</h3>
+        <p>Hit the price and the multiplier applies. Miss and you get zero</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap section" id="modes">
+    <p class="eyebrow">Three ways to play</p>
+    <h2>Daily, quick, or against a friend</h2>
+    <div class="g3">
+      <div class="card mode ink">
+        <span class="eyebrow">Today's five</span>
+        <h3>Same five items for everyone</h3>
+        <p>Five new items a day, the same for everyone. Compare scores</p>
+        <div class="five" aria-hidden="true">
+          <span class="ph ph-car"></span>
+          <span class="ph ph-wine"></span>
+          <span class="ph ph-card miss"></span>
+          <span class="ph ph-yacht"></span>
+          <span class="ph ph-ipad"></span>
+        </div>
+        <div class="share-text">“I scored 1,240 on CashOrTrash today, 4/5 ranges hit. Beat that.”</div>
+      </div>
+      <div class="card mode">
+        <span class="eyebrow">Quick rounds</span>
+        <h3>Five random items, ten seconds each</h3>
+        <p>Random items, whenever you have a minute. Five a day free</p>
+        <div class="mode-foot clock" aria-hidden="true">
+          <div class="bar"><i></i></div>
+          <span class="num">3.8s</span>
+        </div>
+      </div>
+      <div class="card mode">
+        <span class="eyebrow">Challenge a friend</span>
+        <h3>Head-to-head on the same items</h3>
+        <p>Send a code, price the same five items, see who wins. Free</p>
+        <div class="mode-foot board" aria-hidden="true">
+          <div><span>you</span><span class="num">1,420</span></div>
+          <div><span>a friend</span><span class="num">980</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap section">
+    <p class="eyebrow">What you'll price</p>
+    <h2>From a $25 mouse to a $17 million yacht</h2>
+    <ul class="g4">
+      <li class="cat"><span class="ph ph-car" aria-hidden="true"></span>Cars</li>
+      <li class="cat"><span class="ph ph-yacht" aria-hidden="true"></span>Yachts</li>
+      <li class="cat"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 16l20-6-4 3 2 6-4-3-6 4 1-6-9-2z"/></svg></span>Planes</li>
+      <li class="cat"><span class="ico sage" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V5l8-3 8 3v16M9 9h2M13 9h2M9 13h2M13 13h2M10 21v-4h4v4"/></svg></span>Apartments</li>
+      <li class="cat"><span class="ph ph-wine" aria-hidden="true"></span>Wines</li>
+      <li class="cat"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>Electronics</li>
+      <li class="cat"><span class="ph ph-ipad" aria-hidden="true"></span>Apple</li>
+      <li class="cat"><span class="ph ph-card" aria-hidden="true"></span>Collectible cards</li>
+    </ul>
+  </section>
+
+  <section class="wrap section" id="premium">
+    <p class="eyebrow">Free &amp; Premium</p>
+    <h2>Most of the game is free</h2>
+    <div class="g2">
+      <div class="card plan">
+        <h3>Free</h3>
+        <p class="price num">$0</p>
+        <ul>
+          <li>Today's five, every day</li>
+          <li>Head-to-head matches and the leaderboard</li>
+          <li>5 quick rounds a day</li>
+          <li>No account, no ads, no tracking</li>
+        </ul>
+      </div>
+      <div class="card plan premium">
+        <h3>Premium</h3>
+        <p class="price num">$1.99<small> / month</small></p>
+        <p class="fine">or $14.99 a year, local prices vary</p>
+        <ul>
+          <li>Everything in Free</li>
+          <li>Unlimited quick rounds</li>
+          <li>Cancel any time</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap closing" id="get-the-app">
+    <div class="closing-box">
+      <span class="tag" aria-hidden="true"></span>
+      <h2>Know what stuff costs?</h2>
+      <p>Today's five are waiting</p>
+      <div class="ctas">
+        <a class="store-btn" href="https://apps.apple.com/app/id6805992515"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.37 12.6c-.02-2.3 1.88-3.4 1.97-3.46-1.07-1.57-2.74-1.78-3.33-1.8-1.42-.14-2.77.83-3.49.83-.72 0-1.83-.81-3.01-.79-1.55.02-2.98.9-3.78 2.29-1.61 2.8-.41 6.94 1.16 9.21.77 1.11 1.68 2.36 2.88 2.31 1.16-.05 1.59-.75 2.99-.75 1.4 0 1.79.75 3.01.72 1.24-.02 2.03-1.13 2.79-2.25.88-1.29 1.24-2.53 1.26-2.6-.03-.01-2.42-.93-2.45-3.71zM14.08 5.85c.64-.77 1.07-1.85.95-2.92-.92.04-2.03.61-2.69 1.38-.59.68-1.11 1.78-.97 2.83 1.03.08 2.07-.52 2.71-1.29z"/></svg>App Store</a>
+        <a class="store-btn alt" href="https://play.google.com/store/apps/details?id=fun.cashortrash.app"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4.2 2.4c-.25.26-.4.67-.4 1.2v16.8c0 .53.15.94.4 1.2l.06.05L13.7 12.2v-.22L4.26 2.35l-.06.05zM16.85 15.35l-3.15-3.15v-.22l3.15-3.15.07.04 3.73 2.12c1.07.6 1.07 1.6 0 2.2l-3.73 2.12-.07.04zM16.92 15.31L13.7 12.1l-9.5 9.5c.35.37.93.42 1.58.05l11.14-6.34zM16.92 8.89L5.78 2.55c-.65-.37-1.23-.32-1.58.05l9.5 9.5 3.22-3.21z"/></svg>Google Play</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap foot">
+  <span class="wordmark">Cash<em>Or</em>Trash</span>
+  <nav aria-label="Legal">
+    <a href="/privacy">Privacy</a>
+    <a href="/support">Support</a>
+    <a href="/terms">Terms</a>
+  </nav>
+</footer>
+
+
+<script>
+  (function () {
+    'use strict';
+
+    var ITEMS = [
+      {
+        name: 'Bentley Continental GT, 2020',
+        hint: 'Secondhand, from a dealer listing',
+        photo: 'ph-car',
+        price: 150000, min: 30000, max: 280000, step: 1000
+      },
+      {
+        name: 'Château Lafite-Rothschild 2015',
+        hint: 'One bottle, Pauillac, a good year',
+        photo: 'ph-wine',
+        price: 1375, min: 100, max: 4000, step: 25
+      },
+      {
+        name: 'Black Lotus, Beta edition',
+        hint: 'Magic: The Gathering, graded good',
+        photo: 'ph-card',
+        price: 49515, min: 5000, max: 120000, step: 500
+      }
+    ];
+
+    var BASE_POINTS = 100, ROUND_MS = 10000;
+
+    var el = function (id) { return document.getElementById(id); };
+    var slider = el('slider'), range = el('range'), thumbLo = el('thumb-lo'), thumbHi = el('thumb-hi');
+    var loVal = el('lo-val'), hiVal = el('hi-val'), mult = el('mult');
+    var lock = el('lock'), verdict = el('verdict'), verdictWord = el('verdict-word'), verdictDetail = el('verdict-detail');
+    var timerFill = el('timer-fill'), pricePin = el('price-pin');
+    var roundLabel = el('round-label'), photo = el('item-photo');
+
+    var item, lo, hi, locked, timerStart, timerRaf;
+
+    function fmt(n) { return '$' + n.toLocaleString('en-US'); }
+    function snap(n) { return Math.round(n / item.step) * item.step; }
+    function pct(v) { return ((v - item.min) / (item.max - item.min)) * 100; }
+
+    function multiplier() {
+      var w = (hi - lo) / (item.max - item.min);
+      return Math.max(1.1, Math.min(10, 0.5 / Math.max(w, 0.001)));
+    }
+
+    function render() {
+      var pLo = pct(lo), pHi = pct(hi);
+      thumbLo.style.left = pLo + '%';
+      thumbHi.style.left = pHi + '%';
+      range.style.left = pLo + '%';
+      range.style.width = (pHi - pLo) + '%';
+      loVal.textContent = fmt(lo);
+      hiVal.textContent = fmt(hi);
+      mult.textContent = '×' + multiplier().toFixed(1);
+      thumbLo.setAttribute('aria-valuemin', item.min);
+      thumbLo.setAttribute('aria-valuemax', hi - item.step);
+      thumbLo.setAttribute('aria-valuenow', lo);
+      thumbLo.setAttribute('aria-valuetext', fmt(lo));
+      thumbHi.setAttribute('aria-valuemin', lo + item.step);
+      thumbHi.setAttribute('aria-valuemax', item.max);
+      thumbHi.setAttribute('aria-valuenow', hi);
+      thumbHi.setAttribute('aria-valuetext', fmt(hi));
+    }
+
+    function loadItem(i) {
+      item = ITEMS[i % ITEMS.length];
+      lo = snap(item.min + (item.max - item.min) * 0.25);
+      hi = snap(item.min + (item.max - item.min) * 0.75);
+      locked = false;
+      timerStart = null;
+      cancelAnimationFrame(timerRaf);
+      timerFill.style.width = '100%';
+      timerFill.classList.remove('low');
+      photo.className = 'ph item-photo ' + item.photo;
+      photo.setAttribute('aria-label', item.name);
+      el('item-name').textContent = item.name;
+      el('item-hint').textContent = item.hint;
+      el('bound-min').textContent = fmt(item.min);
+      el('bound-max').textContent = fmt(item.max);
+      slider.classList.remove('revealed');
+      verdict.className = 'verdict';
+      lock.disabled = false;
+      lock.style.display = '';
+      roundLabel.textContent = 'Try a round';
+      render();
+    }
+
+    function tick() {
+      if (locked || timerStart === null) return;
+      var left = Math.max(0, ROUND_MS - (performance.now() - timerStart));
+      timerFill.style.width = (left / ROUND_MS * 100) + '%';
+      timerFill.classList.toggle('low', left < 3000);
+      roundLabel.textContent = (left / 1000).toFixed(1) + 's';
+      if (left <= 0) { settle(true); return; }
+      timerRaf = requestAnimationFrame(tick);
+    }
+
+    function startClock() {
+      if (timerStart !== null || locked) return;
+      timerStart = performance.now();
+      timerRaf = requestAnimationFrame(tick);
+    }
+
+    function settle(timedOut) {
+      if (locked) return;
+      locked = true;
+      cancelAnimationFrame(timerRaf);
+      timerFill.style.width = '0%';
+      roundLabel.textContent = timedOut ? "Time!" : 'Locked';
+      var hit = item.price >= lo && item.price <= hi;
+      var pts = hit ? Math.round(BASE_POINTS * multiplier()) : 0;
+      pricePin.style.left = pct(item.price) + '%';
+      slider.classList.add('revealed');
+      lock.style.display = 'none';
+      verdict.className = 'verdict show ' + (hit ? 'cash' : 'trash');
+      verdictWord.textContent = hit ? 'Cash! +' + pts + ' pts' : 'Trash, 0 pts';
+      verdictDetail.textContent = (timedOut ? 'Out of time, so we locked your range. ' : '') +
+        'It goes for ' + fmt(item.price) + ', ' +
+        (hit ? 'inside your range' : (item.price < lo ? 'below your range' : 'above your range'));
+      verdict.querySelector('.next').focus();
+    }
+
+    /* dragging */
+    function valueFromX(clientX) {
+      var r = slider.getBoundingClientRect();
+      var f = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+      return snap(item.min + f * (item.max - item.min));
+    }
+    function attach(thumb, isLo) {
+      thumb.addEventListener('pointerdown', function (e) {
+        if (locked) return;
+        e.preventDefault();
+        startClock();
+        thumb.setPointerCapture(e.pointerId);
+        var move = function (ev) {
+          var v = valueFromX(ev.clientX);
+          if (isLo) lo = Math.min(Math.max(item.min, v), hi - item.step);
+          else hi = Math.max(Math.min(item.max, v), lo + item.step);
+          render();
+        };
+        var up = function () {
+          thumb.removeEventListener('pointermove', move);
+          thumb.removeEventListener('pointerup', up);
+          thumb.removeEventListener('pointercancel', up);
+        };
+        thumb.addEventListener('pointermove', move);
+        thumb.addEventListener('pointerup', up);
+        thumb.addEventListener('pointercancel', up);
+      });
+      thumb.addEventListener('keydown', function (e) {
+        if (locked) return;
+        var d = 0;
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') d = -item.step;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowUp') d = item.step;
+        if (!d) return;
+        e.preventDefault();
+        startClock();
+        if (e.shiftKey) d *= 5;
+        if (isLo) lo = Math.min(Math.max(item.min, lo + d), hi - item.step);
+        else hi = Math.max(Math.min(item.max, hi + d), lo + item.step);
+        render();
+      });
+    }
+    attach(thumbLo, true);
+    attach(thumbHi, false);
+
+    lock.addEventListener('click', function () { startClock(); settle(false); });
+
+    var idx = 0;
+    el('next').addEventListener('click', function () { idx += 1; loadItem(idx); });
+
+    loadItem(0);
+  })();
+</script>
+
+</body>
+</html>

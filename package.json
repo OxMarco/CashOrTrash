@@ -26,6 +26,7 @@
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
     "openapi:emit": "nest build && node dist/scripts/emit-openapi.js",
     "assets:placeholder": "node scripts/generate-placeholder.mjs",
+    "assets:landing": "node scripts/build-landing.mjs",
     "admin:hash": "node scripts/admin-hash.mjs"
   },
   "dependencies": {
